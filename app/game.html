@@ -103,7 +103,7 @@ const REPLICATE_MODEL_VERSION = '7762fd07cf82c948538e41f63f77d685e02b063e37e496e
 
 const PROMPTS = {
     HAPPY: {
-        pos: 'sunny spring meadow 2d platformer game, bright blue sky with white clouds, vibrant green grass field, colorful wildflowers blooming everywhere, butterflies, cheerful sunny day, warm golden sunlight, lush nature, peaceful happy atmosphere, side view, game background art',
+        pos: 'sunny spring meadow 2d platformer game, bright blue sky with white clouds, vibrant green grass field, occasional blue water terrain, colorful wildflowers blooming everywhere, butterflies, cheerful sunny day, warm golden sunlight, lush nature, peaceful happy atmosphere, side view, game background art',
         neg: 'dark, gloomy, winter, ice, snow, dead, withered, volcanic, lava, fire, blurry, ugly, text, watermark',
     },
     NEUTRAL: {
@@ -198,7 +198,7 @@ class ImageGenerator {
             }
             const data = await resp.json();
             if (data.image_data_url && this.onTileReady) {
-                this.onTileReady(tileIndex, slot, data.image_data_url);
+                this.onTileReady(tileIndex, slot, data.image_data_url, emotion);
             } else if (data.error) {
                 console.warn(`[gen] Tile ${tileIndex} generation error:`, data.error);
             }
@@ -636,7 +636,7 @@ class PixelDissolve {
     }
 
     // Update dissolve animations - call this every frame
-    updateAnimations(tileManager, currentEmotion, onDissolveComplete) {
+    updateAnimations(tileManager, currentEmotion, onDissolveComplete, currentLeftTile = 0) {
         const now = Date.now();
         for (const [tileIndex, s] of this.tiles.entries()) {
             if (s.dissolving) {
@@ -655,8 +655,7 @@ class PixelDissolve {
                     
                     // Update TileManager emotion tracking to match promoted image
                     if (tileManager && tileManager.has(tileIndex)) {
-                        const leftTile = 0; // Dummy value, won't trigger eviction
-                        tileManager.store(tileIndex, s.imgA, 'a', leftTile, currentEmotion);
+                        tileManager.store(tileIndex, s.imgA, 'a', currentLeftTile, currentEmotion);
                         console.log(`[dissolve] Completed transition for tile ${tileIndex}, updated emotion to ${currentEmotion}`);
                     } else {
                         console.log(`[dissolve] Completed transition for tile ${tileIndex}`);
@@ -736,12 +735,12 @@ class OpenWorldEngine {
         };
 
         this.currentTheme    = this.palettes.NEUTRAL; // will be set properly on first updateVisuals()
-        this.targetStress    = 0.5;
-        this.visualStress    = 0.5;
         this.smoothingFactor = 0.015;
 
         this.currentEmotion = 'NEUTRAL';
         this.faceMode = true; // true = facial recognition, false = manual control
+        this.targetStress    = 0.35;  // start in NEUTRAL range (0.22–0.47) to avoid spurious SAD on frame 1
+        this.visualStress    = 0.35;
 
         // ── AI background tile layer ──
         this.tileWidth      = 512; // matches canvas and generation size
@@ -750,7 +749,7 @@ class OpenWorldEngine {
         this.tileManager = new TileManager();
         this.dissolve    = new PixelDissolve();
         this.imageGen    = new ImageGenerator();
-        this.imageGen.onTileReady = (tileIndex, slot, dataUrl) => this._onTileReady(tileIndex, slot, dataUrl);
+        this.imageGen.onTileReady = (tileIndex, slot, dataUrl, genEmotion) => this._onTileReady(tileIndex, slot, dataUrl, genEmotion);
 
         // ── Sprite system ──
         this.sprites = {
@@ -1258,18 +1257,29 @@ class OpenWorldEngine {
         }
     }
 
-    _onTileReady(tileIndex, slot, dataUrl) {
+    _onTileReady(tileIndex, slot, dataUrl, genEmotion) {
         console.log(`[tiles] Tile ${tileIndex}-${slot} received (${Math.round(dataUrl.length/1024)}KB)`);
         const img  = new Image();
         img.onload = () => {
             const leftTile = Math.floor(this.cameraX / this.tileWidth);
             console.log(`[tiles] Tile ${tileIndex}-${slot} decoded: ${img.naturalWidth}x${img.naturalHeight}px`);
-            this.tileManager.store(tileIndex, img, slot, leftTile, this.currentEmotion);
-            
-            // Update dissolve system
+            // Store with the emotion it was actually generated for, not the current one
+            this.tileManager.store(tileIndex, img, slot, leftTile, genEmotion);
+
             const { a, b } = this.tileManager.getImages(tileIndex);
             if (slot === 'a' && a) {
                 this.dissolve.setImages(tileIndex, a, null);
+                // If emotion changed while this tile was in-flight, queue a B-slot immediately
+                if (genEmotion !== this.currentEmotion && !this.tileManager.isPendingB(tileIndex)) {
+                    this.tileManager.markPendingB(tileIndex);
+                    const tileCameraX = tileIndex * this.tileWidth;
+                    const wiremeshDataUrl = this.wiremesh.render(
+                        this._getEntitiesForTile(tileIndex), this.player, tileCameraX - TILE_OVERLAP,
+                        this.baseGroundY, TILE_GEN_W, this.canvas.height, this.currentEmotion
+                    );
+                    this.imageGen.enqueueTile(tileIndex, wiremeshDataUrl, this.currentEmotion, 'b');
+                    console.log(`[tiles] Tile ${tileIndex}-A arrived as ${genEmotion} but emotion is now ${this.currentEmotion} — queued B-slot`);
+                }
             } else if (slot === 'b' && a && b) {
                 this.dissolve.setImages(tileIndex, a, b);
             }
@@ -1333,7 +1343,7 @@ class OpenWorldEngine {
         this.updatePhysics();
         this.updateVisuals();
         this.updateTileGen();
-        this.dissolve.updateAnimations(this.tileManager, this.currentEmotion, (tileIndex) => this._onDissolveComplete(tileIndex)); // Update A→B dissolve transitions
+        this.dissolve.updateAnimations(this.tileManager, this.currentEmotion, (tileIndex) => this._onDissolveComplete(tileIndex), Math.floor(this.cameraX / this.tileWidth)); // Update A→B dissolve transitions
         this.draw();
         requestAnimationFrame(() => this.loop());
     }

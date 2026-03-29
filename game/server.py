@@ -75,8 +75,9 @@ def _webcam_thread():
 
             frame_count += 1
             if frame_count % 6 == 0:
-                results = detector.predict(frame, detection_only=_is_calibrating)
-                if _is_calibrating:
+                calibrating = _is_calibrating  # snapshot once — avoid race with /start_game
+                results = detector.predict(frame, detection_only=calibrating)
+                if calibrating:
                     is_aligned = False
                     if results:
                         x, y, w, h = results[0]["box"]

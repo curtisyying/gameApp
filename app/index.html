@@ -17,6 +17,8 @@
             margin: 0;
             text-align: center;
         }
+
+        /* ── Welcome screen ── */
         h1 {
             font-size: 3.5rem;
             margin-bottom: 10px;
@@ -39,7 +41,6 @@
             font-size: 1.5rem;
             font-weight: bold;
             font-family: monospace;
-            text-decoration: none;
             border-radius: 5px;
             transition: all 0.2s ease-in-out;
             cursor: pointer;
@@ -51,14 +52,166 @@
             box-shadow: 0 0 20px #44ff88;
             transform: scale(1.05);
         }
+
+        /* ── Calibration overlay ── */
+        #calibration-ui {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #calibration-ui h2 {
+            font-size: 1.8rem;
+            color: #44ff88;
+            margin-bottom: 8px;
+        }
+        #calibration-ui .subtitle {
+            color: #aaa;
+            font-size: 0.95rem;
+            margin-bottom: 20px;
+        }
+        #camera-container {
+            position: relative;
+            width: 320px;
+            height: 240px;
+            border: 4px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            margin-bottom: 16px;
+        }
+        #video-feed {
+            width: 320px;
+            height: 240px;
+            display: block;
+            transform: scaleX(-1); /* mirror so it feels natural */
+        }
+        #target-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 140px;
+            border: 3px dashed #ff4444;
+            box-sizing: border-box;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        #target-box.aligned {
+            border-color: #44ff88;
+            border-style: solid;
+            box-shadow: 0 0 15px rgba(68, 255, 85, 0.5);
+        }
+        #align-status {
+            font-size: 0.95rem;
+            color: #aaa;
+            margin-bottom: 20px;
+            min-height: 1.4em;
+        }
+        #align-status.ready {
+            color: #44ff88;
+        }
+        .start-btn {
+            padding: 15px 40px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            font-family: monospace;
+            background: #222;
+            color: #555;
+            border: 2px solid #555;
+            border-radius: 5px;
+            cursor: not-allowed;
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+        .start-btn.ready {
+            color: #111;
+            background: #44ff88;
+            border-color: #44ff88;
+            cursor: pointer;
+            box-shadow: 0 0 15px #44ff88;
+        }
+        .start-btn.ready:hover {
+            transform: scale(1.05);
+        }
+        #server-error {
+            display: none;
+            color: #ff5555;
+            font-size: 0.85rem;
+            margin-top: 12px;
+        }
     </style>
 </head>
 <body>
 
+<!-- Welcome screen -->
+<div id="welcome">
     <h1>AI GAMEBOY</h1>
     <p>A modular platformer powered by real-time emotion and stress detection. Your webcam drives the gameplay environment.</p>
-    
-    <a href="game.html" class="play-btn">Play Now</a>
+    <button class="play-btn" onclick="showCalibration()">Play Now</button>
+</div>
+
+<!-- Calibration overlay -->
+<div id="calibration-ui">
+    <h2>Position Your Face</h2>
+    <p class="subtitle">Center your face inside the box before starting</p>
+    <div id="camera-container">
+        <img id="video-feed" src="http://localhost:8765/video_feed" alt="Camera feed">
+        <div id="target-box"></div>
+    </div>
+    <p id="align-status">Move closer and center your face in the box</p>
+    <button id="start-game-btn" class="start-btn" disabled onclick="launchGame()">Start Game</button>
+    <p id="server-error">Could not connect to server — make sure game/server.py is running on port 8765</p>
+</div>
+
+<script>
+const SERVER = 'http://localhost:8765';
+let sse = null;
+
+function showCalibration() {
+    document.getElementById('welcome').style.display = 'none';
+    document.getElementById('calibration-ui').style.display = 'flex';
+
+    // Show server error if video feed fails to load
+    const feed = document.getElementById('video-feed');
+    feed.onerror = () => {
+        document.getElementById('server-error').style.display = 'block';
+    };
+
+    // Connect to SSE stream to track face alignment
+    sse = new EventSource(`${SERVER}/emotions`);
+    sse.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        const aligned = data.is_aligned === true;
+        const box    = document.getElementById('target-box');
+        const btn    = document.getElementById('start-game-btn');
+        const status = document.getElementById('align-status');
+
+        if (aligned) {
+            box.classList.add('aligned');
+            btn.classList.add('ready');
+            btn.disabled = false;
+            status.textContent = 'Perfect! Press Start Game when ready.';
+            status.className = 'ready';
+        } else {
+            box.classList.remove('aligned');
+            btn.classList.remove('ready');
+            btn.disabled = true;
+            status.textContent = 'Move closer and center your face in the box';
+            status.className = '';
+        }
+    };
+    sse.onerror = () => {
+        document.getElementById('server-error').style.display = 'block';
+    };
+}
+
+function launchGame() {
+    if (sse) sse.close();
+    fetch(`${SERVER}/start_game`, { method: 'POST' })
+        .finally(() => { window.location.href = 'game.html'; });
+}
+</script>
 
 </body>
 </html>
