@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Emotion Platformer</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: monospace;
+        }
+
+        #game-wrapper {
+            position: relative;
+            width: 800px;
+            height: 400px;
+        }
+
+        canvas#gameCanvas {
+            display: block;
+            width: 800px;
+            height: 400px;
+            border: 2px solid #444;
+        }
+
+        /* ── UI overlay (pointer-events: none so it doesn't steal input) ── */
+        #ui-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+        }
+
+        #emotion-badge {
+            position: absolute;
+            top: 12px; left: 12px;
+            background: rgba(0,0,0,0.72);
+            color: #fff;
+            padding: 6px 14px;
+            border-radius: 4px;
+            font-size: 14px;
+            border-left: 4px solid #888;
+            transition: border-color 0.5s, color 0.5s;
+            letter-spacing: 0.05em;
+        }
+
+        /* pulsing dot shown while Replicate is generating */
+        #gen-dot {
+            position: absolute;
+            top: 16px; right: 14px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: transparent;
+            transition: background 0.3s;
+        }
+        #gen-dot.generating {
+            background: #ff8800;
+            animation: dotpulse 0.9s ease-in-out infinite;
+        }
+        #gen-dot.done {
+            background: #44ff88;
+        }
+        @keyframes dotpulse {
+            0%, 100% { transform: scale(1);   opacity: 1; }
+            50%       { transform: scale(1.6); opacity: 0.5; }
+        }
+
+        /* thin stress bar at bottom of canvas */
+        #stress-track {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 4px;
+            background: rgba(0,0,0,0.4);
+        }
+        #stress-fill {
+            height: 100%;
+            width: 0%;
+            background: #44ff88;
+            transition: width 0.4s, background 0.5s;
+            border-radius: 0 2px 2px 0;
+        }
+
+        /* ── Controls row below canvas ── */
+        #controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        button {
+            background: #222;
+            color: #ccc;
+            border: 1px solid #555;
+            padding: 6px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button:hover { background: #333; color: #fff; }
+        button.active { border-color: #ff8800; color: #ff8800; }
+
+        #hint {
+            color: #555;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div id="ui-overlay">
+        <div id="emotion-badge">😐 NEUTRAL</div>
+        <div id="gen-dot"></div>
+        <div id="stress-track">
+            <div id="stress-fill"></div>
+        </div>
+    </div>
+</div>
+
+<div id="controls">
+    <button id="btn-demo" onclick="toggleDemo()">Demo Mode</button>
+    <button onclick="game.forceRegen()">Regenerate Now</button>
+    <button onclick="testFade()">Test Fade</button>
+    <button id="btn-test-gen" onclick="testImageGen()">Test Image Gen</button>
+    <span id="hint">↑ / Space = jump &nbsp; ← → = move</span>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════════
+
+const SERVER_URL = 'http://localhost:8765';
+
+// ControlNet seg model on Replicate (jagilley/controlnet-seg).
+// Auto-segments the input image via Uniformer, then generates conditioned on those segments.
+// https://replicate.com/jagilley/controlnet-seg
+const REPLICATE_MODEL_VERSION =
+    'f967b165f4cd2e151d11e7450a8214e5d22ad2007f042f2f891ca3981dbfba0d';
+
+// Semantic colors sent to ControlNet as the conditioning image
+const WIRE = {
+    background: '#000000',
+    platform:   '#FF0000',
+    ground:     '#FF8800',
+    player:     '#0088FF',
+    enemy:      '#00FF00',
+};
+
+// Per-emotion ControlNet prompts
+const PROMPTS = {
+    HAPPY: {
+        pos: 'candy kingdom 2d platformer, pastel rainbow sky, cotton candy terrain, bubbly colorful clouds, whimsical, saturated, cute cartoon game art, side view',
+        neg: 'dark, gritty, realistic, horror, monochrome, blurry, ugly',
+    },
+    SAD: {
+        pos: 'drowned ruins 2d platformer, heavy rain, dark blue sky, crumbling stone, dead trees, desaturated, melancholy, game art, side view',
+        neg: 'bright, colorful, happy, warm, sunny, blurry, ugly',
+    },
+    ANGRY: {
+        pos: 'volcanic hellscape 2d platformer, blood red sky, ash clouds, lava cracks, obsidian walls, fire, chaotic dark, game art, side view',
+        neg: 'peaceful, pastel, cute, calm, blurry, ugly',
+    },
+    NEUTRAL: {
+        pos: 'temperate forest 2d platformer, soft blue sky, green hills, stone terrain, natural adventure game art, side view',
+        neg: 'extreme, dramatic, horror, blurry, ugly',
+    },
+};
+
+// UI colours per emotion state
+const UI_COLORS = {
+    HAPPY:   '#ffdd44',
+    SAD:     '#4499ff',
+    ANGRY:   '#ff4422',
+    NEUTRAL: '#44ff88',
+};
+
+const UI_LABELS = {
+    HAPPY:   '😊 HAPPY',
+    SAD:     '😢 SAD',
+    ANGRY:   '😠 ANGRY',
+    NEUTRAL: '😐 NEUTRAL',
+};
+
+
+// ════════════════════════════════════════════════════════════
+// STRESS DIRECTOR  (adapted from stress_states.jsx)
+// Maps raw stress + Python emotion label → HAPPY/NEUTRAL/SAD/ANGRY
+// ════════════════════════════════════════════════════════════
+
+class StressDirector {
+    constructor() {
+        this.stressBuffer   = [];
+        this.bufferSize     = 10;
+        this.currentState   = 'NEUTRAL';
+        this.lastChangeTime = 0;
+        this.minDuration    = 2000; // ms before we allow another transition
+        this.hysteresis     = 0.07;
+
+        this.thresholds = {
+            HAPPY:   { max: 0.15 },
+            NEUTRAL: { min: 0.10, max: 0.35 },
+            SAD:     { min: 0.30, max: 0.65 },
+            ANGRY:   { min: 0.60, max: 1.0  },
+        };
+
+        // Set by caller: (newState, oldState, avgStress) => void
+        this.onStateChange = null;
+    }
+
+    // Maps Python emotion strings to lower-case mood categories
+    _mapEmotion(label) {
+        return {
+            Happy:   'happy',
+            Sad:     'sad',
+            Angry:   'angry',
+            Disgust: 'angry',
+            Fear:    'angry',
+            Neutral: 'neutral',
+            Surprise:'neutral',
+        }[label] ?? 'neutral';
+    }
+
+    update(rawStress, pythonLabel) {
+        const mood = this._mapEmotion(pythonLabel);
+
+        this.stressBuffer.push(rawStress);
+        if (this.stressBuffer.length > this.bufferSize) this.stressBuffer.shift();
+        if (this.stressBuffer.length < this.bufferSize) return this.currentState;
+
+        const avg = this.stressBuffer.reduce((a, b) => a + b) / this.stressBuffer.length;
+        const now = Date.now();
+        if (now - this.lastChangeTime < this.minDuration) return this.currentState;
+
+        const T = this.thresholds;
+        const H = this.hysteresis;
+        let next = this.currentState;
+
+        if (this.currentState === 'HAPPY') {
+            if (avg > T.HAPPY.max + H && mood === 'neutral') next = 'NEUTRAL';
+        } else if (this.currentState === 'NEUTRAL') {
+            if      (avg > T.NEUTRAL.max + H && mood === 'sad')   next = 'SAD';
+            else if (avg < T.NEUTRAL.min - H && mood === 'happy') next = 'HAPPY';
+        } else if (this.currentState === 'SAD') {
+            if      (avg > T.SAD.max + H && (mood === 'angry'))   next = 'ANGRY';
+            else if (avg < T.SAD.min - H && mood === 'neutral')   next = 'NEUTRAL';
+        } else if (this.currentState === 'ANGRY') {
+            if      (avg < T.ANGRY.min - H && mood === 'sad')     next = 'SAD';
+            else if (avg < T.NEUTRAL.max - H && mood === 'neutral') next = 'NEUTRAL';
+        }
+
+        if (next !== this.currentState) {
+            const prev = this.currentState;
+            this.currentState   = next;
+            this.lastChangeTime = now;
+            console.log(`[mood] ${prev} → ${next}  (avg stress ${Math.round(avg * 100)}%)`);
+            if (this.onStateChange) this.onStateChange(next, prev, avg);
+        }
+
+        return this.currentState;
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// WIREMESH RENDERER
+// Draws the currently visible game area as a semantic color map
+// (512 × 512) ready to be sent to ControlNet as the conditioning image.
+// ════════════════════════════════════════════════════════════
+
+class WiremeshRenderer {
+    constructor() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width  = 512;
+        this.canvas.height = 512;
+        this.ctx = this.canvas.getContext('2d');
+    }
+
+    /**
+     * Renders the current visible game area to a 512×512 semantic map.
+     * Returns a base64 PNG data URL.
+     */
+    render(entities, player, cameraX, groundY, gameW, gameH) {
+        const ctx   = this.ctx;
+        const OUT_W = this.canvas.width;
+        const OUT_H = this.canvas.height;
+        const sx    = OUT_W / gameW;   // scale factors
+        const sy    = OUT_H / gameH;
+
+        ctx.clearRect(0, 0, OUT_W, OUT_H);
+
+        // Background
+        ctx.fillStyle = WIRE.background;
+        ctx.fillRect(0, 0, OUT_W, OUT_H);
+
+        // Ground strip
+        ctx.fillStyle = WIRE.ground;
+        ctx.fillRect(0, groundY * sy, OUT_W, OUT_H);
+
+        // Platforms + enemies (world → screen → scaled)
+        for (const e of entities) {
+            const ex = (e.x - cameraX) * sx;
+            const ey = e.y * sy;
+            const ew = e.width  * sx;
+            const eh = e.height * sy;
+
+            if (ex + ew < 0 || ex > OUT_W) continue; // fully off-screen
+
+            ctx.fillStyle = e.type === 'platform' ? WIRE.platform : WIRE.enemy;
+            ctx.fillRect(ex, ey, ew, eh);
+        }
+
+        // Player
+        ctx.fillStyle = WIRE.player;
+        ctx.fillRect(
+            (player.x - cameraX) * sx,
+            player.y * sy,
+            player.width  * sx,
+            player.height * sy,
+        );
+
+        return this.canvas.toDataURL('image/png');
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// IMAGE GENERATOR
+// Queues wiremesh → Replicate requests.  One in-flight at a time.
+// Newer high-priority requests (emotion change) jump to the front.
+// ════════════════════════════════════════════════════════════
+
+const GEN_COOLDOWN_MS = 15000; // minimum ms between generation requests
+
+class ImageGenerator {
+    constructor() {
+        this.busy        = false;
+        this.queue       = [];
+        this.lastGenTime = 0;
+        // (imageDataUrl, emotion) => void
+        this.onImageReady = null;
+    }
+
+    enqueue(wiremeshDataUrl, emotion, priority = false) {
+        // Only keep one pending item — always the latest
+        this.queue = [];
+        this.queue.push({ wiremeshDataUrl, emotion, priority });
+        this._process();
+    }
+
+    async _process() {
+        if (this.busy || this.queue.length === 0) return;
+
+        // Enforce cooldown — priority requests jump to front of queue but still wait
+        const { wiremeshDataUrl, emotion } = this.queue[0];
+        const elapsed = Date.now() - this.lastGenTime;
+        if (elapsed < GEN_COOLDOWN_MS) {
+            const wait = GEN_COOLDOWN_MS - elapsed;
+            setTimeout(() => this._process(), wait);
+            return;
+        }
+
+        this.queue.shift();
+        this.busy        = true;
+        this.lastGenTime = Date.now();
+
+        const p = PROMPTS[emotion] ?? PROMPTS.NEUTRAL;
+        setGenDot(true);
+        console.log(`[gen] Requesting image for ${emotion}...`);
+
+        try {
+            const resp = await fetch(`${SERVER_URL}/generate`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    version: REPLICATE_MODEL_VERSION,
+                    input: {
+                        image:            wiremeshDataUrl,
+                        prompt:           p.pos + ', best quality, extremely detailed',
+                        a_prompt:         'best quality, game art, vivid, detailed',
+                        n_prompt:         p.neg,
+                        num_samples:      '1',
+                        image_resolution: '512',
+                        ddim_steps:       20,
+                        scale:            9.0,
+                        seed:             -1,
+                    },
+                }),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                console.warn('[gen] Server error:', err.error ?? resp.status);
+                return;
+            }
+
+            const data = await resp.json();
+            if (data.image_data_url && this.onImageReady) {
+                this.onImageReady(data.image_data_url, emotion);
+            } else if (data.error) {
+                console.warn('[gen] Generation error:', data.error);
+            }
+        } catch (err) {
+            console.warn('[gen] Request failed:', err.message);
+        } finally {
+            this.busy = false;
+            setGenDot(false);
+            if (this.queue.length > 0) setTimeout(() => this._process(), 500);
+        }
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// UI HELPERS
+// ════════════════════════════════════════════════════════════
+
+function setGenDot(generating) {
+    const el = document.getElementById('gen-dot');
+    el.className = generating ? 'generating' : 'done';
+    if (!generating) {
+        setTimeout(() => { if (el.className === 'done') el.className = ''; }, 2500);
+    }
+}
+
+function updateEmotionUI(state, stress) {
+    const badge = document.getElementById('emotion-badge');
+    const fill  = document.getElementById('stress-fill');
+    const color = UI_COLORS[state] ?? '#888';
+
+    badge.textContent        = UI_LABELS[state]  ?? state;
+    badge.style.borderColor  = color;
+    badge.style.color        = '#fff';
+
+    fill.style.width      = `${Math.round(stress * 100)}%`;
+    fill.style.background = color;
+}
+
+
+// ════════════════════════════════════════════════════════════
+// GAME ENGINE
+// ════════════════════════════════════════════════════════════
+
+class OpenWorldEngine {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx    = this.canvas.getContext('2d');
+
+        this.keys    = { right: false, left: false, up: false };
+        this.cameraX = 0;
+        this.groundY = 350;
+
+        this.chunkSize    = 1000;
+        this.worldMap     = new Map();
+        this.activeEntities = [];
+
+        // Physics colours (shown transparently when bg image exists)
+        this.colors = {
+            player:   '#0055ff',
+            platform: '#228B22',
+            ground:   '#8B4513',
+            enemy:    '#cc2200',
+        };
+
+        this.player = {
+            x: 400, y: 200, width: 20, height: 30,
+            vx: 0, vy: 0, speed: 5, jump: -12, grounded: false,
+        };
+
+        // ── AI background layer ──
+        this.currentEmotion  = 'NEUTRAL';
+        this.currentChunkIdx = 0;
+
+        this.bgImage = null;   // current HTMLImageElement (fully loaded)
+        this.bgAlpha = 0;
+        this.nextBgImage = null;
+        this.nextBgAlpha = 0;
+
+        // Cache: one generated image per emotion — avoids redundant API calls
+        this.emotionImageCache = {};   // emotion → HTMLImageElement
+        this.emotionGenPending = new Set(); // emotions currently being generated
+
+        this.wiremesh = new WiremeshRenderer();
+        this.imageGen = new ImageGenerator();
+        this.imageGen.onImageReady = (dataUrl, emotion) => this._onImageReady(dataUrl, emotion);
+
+        this._setupInputs();
+    }
+
+    _setupInputs() {
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right = true;
+            if (e.code === 'ArrowLeft')  this.keys.left  = true;
+            if (e.code === 'ArrowUp' || e.code === 'Space') {
+                e.preventDefault(); // stop Space scrolling the page
+                this.keys.up = true;
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right = false;
+            if (e.code === 'ArrowLeft')  this.keys.left  = false;
+            if (e.code === 'ArrowUp' || e.code === 'Space') this.keys.up = false;
+        });
+    }
+
+    // ── World generation ────────────────────────────────────
+
+    _generateChunk(idx) {
+        const data = [];
+        const startX = idx * this.chunkSize;
+        const endX   = startX + this.chunkSize;
+        let x = startX + Math.random() * 100;
+
+        while (x < endX - 150) {
+            const w  = Math.random() * 120 + 80;
+            const py = this.groundY - (Math.random() * 100 + 50);
+            data.push({ type: 'platform', x, y: py, width: w, height: 20 });
+
+            if (Math.random() < 0.3) {
+                data.push({ type: 'enemy', x: x + w / 2 - 10, y: py - 20, width: 20, height: 20 });
+            }
+            x += w + Math.random() * 120 + 60;
+        }
+        return data;
+    }
+
+    _updateChunks() {
+        const ci = Math.floor(this.player.x / this.chunkSize);
+        this.activeEntities = [];
+
+        for (const idx of [ci - 1, ci, ci + 1]) {
+            if (!this.worldMap.has(idx)) {
+                this.worldMap.set(idx, this._generateChunk(idx));
+            }
+            this.activeEntities.push(...this.worldMap.get(idx));
+        }
+        this.currentChunkIdx = ci;
+    }
+
+    // ── Emotion + generation ─────────────────────────────────
+
+    setEmotion(state, stress) {
+        const changed = state !== this.currentEmotion;
+        this.currentEmotion = state;
+        updateEmotionUI(state, stress);
+
+        if (changed) {
+            // If we already have a cached image for this emotion, apply it immediately
+            if (this.emotionImageCache[state]) {
+                console.log(`[bg] Cache hit for ${state} — instant swap`);
+                this._applyImage(this.emotionImageCache[state]);
+            }
+            // Auto-generation on emotion change disabled during testing.
+            // Re-enable by uncommenting:
+            // else { this._requestGeneration(state, true); }
+        }
+    }
+
+    forceRegen() {
+        // Clear cache for current emotion and regenerate
+        delete this.emotionImageCache[this.currentEmotion];
+        this.emotionGenPending.delete(this.currentEmotion);
+        this._requestGeneration(this.currentEmotion, true);
+    }
+
+    _requestGeneration(emotion, priority = false) {
+        // Skip if already generating this emotion
+        if (this.emotionGenPending.has(emotion)) return;
+        this.emotionGenPending.add(emotion);
+
+        const wiremeshData = this.wiremesh.render(
+            this.activeEntities,
+            this.player,
+            this.cameraX,
+            this.groundY,
+            this.canvas.width,
+            this.canvas.height,
+        );
+        this.imageGen.enqueue(wiremeshData, emotion, priority);
+    }
+
+    _onImageReady(dataUrl, emotion) {
+        console.log(`[bg] Image received for ${emotion} (${Math.round(dataUrl.length / 1024)}KB)`);
+        this.emotionGenPending.delete(emotion);
+
+        const img = new Image();
+        img.onload = () => {
+            console.log(`[bg] Cached ${emotion}: ${img.naturalWidth}x${img.naturalHeight}px`);
+            this.emotionImageCache[emotion] = img;
+            // Only apply if this is still the active emotion
+            if (emotion === this.currentEmotion) this._applyImage(img);
+        };
+        img.onerror = () => console.error(`[bg] Failed to decode image for ${emotion}`);
+        img.src = dataUrl;
+    }
+
+    _applyImage(img) {
+        this.nextBgImage = img;
+        this.nextBgAlpha = 0;
+    }
+
+    // ── Physics ─────────────────────────────────────────────
+
+    _updatePhysics() {
+        const p = this.player;
+
+        if      (this.keys.right) p.vx =  p.speed;
+        else if (this.keys.left)  p.vx = -p.speed;
+        else                      p.vx =  0;
+
+        if (this.keys.up && p.grounded) {
+            p.vy = p.jump;
+            p.grounded = false;
+        }
+
+        p.vy += 0.6;
+        p.x  += p.vx;
+        p.y  += p.vy;
+
+        this.cameraX = p.x - this.canvas.width / 2;
+        p.grounded   = false;
+
+        // Floor
+        if (p.y + p.height >= this.groundY) {
+            p.y        = this.groundY - p.height;
+            p.vy       = 0;
+            p.grounded = true;
+        }
+
+        // Platforms
+        for (const e of this.activeEntities) {
+            if (e.type !== 'platform') continue;
+            if (
+                p.vy >= 0 &&
+                p.x + p.width  > e.x &&
+                p.x            < e.x + e.width &&
+                p.y + p.height >= e.y &&
+                p.y + p.height <= e.y + p.vy + 2
+            ) {
+                p.grounded = true;
+                p.vy       = 0;
+                p.y        = e.y - p.height;
+            }
+        }
+    }
+
+    // ── Rendering ────────────────────────────────────────────
+
+    _draw() {
+        const ctx = this.ctx;
+        const W   = this.canvas.width;
+        const H   = this.canvas.height;
+
+        ctx.clearRect(0, 0, W, H);
+
+        // Sky fallback (shown when no bg image yet)
+        ctx.fillStyle = '#87CEEB';
+        ctx.fillRect(0, 0, W, H);
+
+        // ── Background image layers ──
+        // Current image (fully faded in or still fading out)
+        if (this.bgImage) {
+            ctx.globalAlpha = this.bgAlpha;
+            ctx.drawImage(this.bgImage, 0, 0, W, H);
+            ctx.globalAlpha = 1;
+        }
+
+        // Next image (fading in over current)
+        if (this.nextBgImage) {
+            this.nextBgAlpha = Math.min(1, this.nextBgAlpha + 0.025);
+            ctx.globalAlpha = this.nextBgAlpha;
+            ctx.drawImage(this.nextBgImage, 0, 0, W, H);
+            ctx.globalAlpha = 1;
+
+            if (this.nextBgAlpha >= 1) {
+                // Swap: next becomes current
+                this.bgImage    = this.nextBgImage;
+                this.bgAlpha    = 1;
+                this.nextBgImage = null;
+                this.nextBgAlpha = 0;
+            }
+        }
+
+        // ── World geometry (semi-transparent over bg) ──
+        const hasBg = !!(this.bgImage || this.nextBgImage);
+
+        ctx.save();
+        ctx.translate(-this.cameraX, 0);
+
+        // Ground
+        ctx.fillStyle = hasBg ? 'rgba(139,69,19,0.35)' : this.colors.ground;
+        ctx.fillRect(this.cameraX - 100, this.groundY, W + 200, H - this.groundY);
+
+        // Entities
+        for (const e of this.activeEntities) {
+            if (e.type === 'platform') {
+                ctx.fillStyle = hasBg ? 'rgba(34,139,34,0.30)' : this.colors.platform;
+                ctx.fillRect(e.x, e.y, e.width, e.height);
+                // Outline so platforms are visible against dark images
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth   = 1;
+                ctx.strokeRect(e.x, e.y, e.width, e.height);
+            } else if (e.type === 'enemy') {
+                ctx.fillStyle = this.colors.enemy;
+                ctx.fillRect(e.x, e.y, e.width, e.height);
+            }
+        }
+
+        // Player
+        ctx.fillStyle = this.colors.player;
+        ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+
+        ctx.restore();
+    }
+
+    // ── Main loop ────────────────────────────────────────────
+
+    _loop() {
+        this._updateChunks();
+        this._updatePhysics();
+        this._draw();
+        requestAnimationFrame(() => this._loop());
+    }
+
+    start() {
+        this._loop();
+        this._connectEmotionStream();
+        // Auto-generation disabled during testing — use "Test Image Gen" button
+        // to trigger manually. Re-enable by uncommenting the block below.
+        // setTimeout(() => {
+        //     console.log('[bg] Pre-warming all emotion backgrounds...');
+        //     for (const emotion of ['NEUTRAL', 'HAPPY', 'SAD', 'ANGRY']) {
+        //         this._requestGeneration(emotion);
+        //     }
+        // }, 1000);
+    }
+
+    // ── Server-Sent Events from Python server ────────────────
+
+    _connectEmotionStream() {
+        const director = new StressDirector();
+        director.onStateChange = (newState, _oldState, stress) => {
+            this.setEmotion(newState, stress);
+        };
+
+        const connect = () => {
+            const es = new EventSource(`${SERVER_URL}/emotions`);
+
+            es.onopen = () => console.log('[sse] Connected to emotion stream.');
+
+            es.onmessage = (ev) => {
+                try {
+                    const data = JSON.parse(ev.data);
+                    director.update(data.stress, data.emotion);
+                    // Keep stress bar live even without a state transition
+                    updateEmotionUI(this.currentEmotion, data.stress);
+                } catch { /* ignore parse errors */ }
+            };
+
+            es.onerror = () => {
+                console.warn('[sse] Disconnected — retrying in 3 s');
+                es.close();
+                setTimeout(connect, 3000);
+            };
+        };
+
+        connect();
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// DEMO MODE  — auto-cycles emotions every 8 s (great for booths)
+// ════════════════════════════════════════════════════════════
+
+let _demoInterval = null;
+const DEMO_CYCLE  = ['NEUTRAL', 'HAPPY', 'ANGRY', 'SAD'];
+let   _demoIdx    = 0;
+
+function toggleDemo() {
+    const btn = document.getElementById('btn-demo');
+    if (_demoInterval) {
+        clearInterval(_demoInterval);
+        _demoInterval = null;
+        btn.className = '';
+        return;
+    }
+    btn.className = 'active';
+    _demoIdx = 0;
+    const tick = () => {
+        game.setEmotion(DEMO_CYCLE[_demoIdx % DEMO_CYCLE.length], 0.5);
+        _demoIdx++;
+    };
+    tick();
+    _demoInterval = setInterval(tick, 8000);
+}
+
+
+// ════════════════════════════════════════════════════════════
+// STATIC API TEST  — hardcoded wiremesh, no game state needed
+// Tests the full Replicate pipeline in isolation.
+// ════════════════════════════════════════════════════════════
+
+function _makeStaticWiremesh() {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    const ctx = c.getContext('2d');
+
+    // Black background
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Ground strip (orange)
+    ctx.fillStyle = '#FF8800';
+    ctx.fillRect(0, 430, 512, 82);
+
+    // Platforms (red)
+    ctx.fillStyle = '#FF0000';
+    ctx.fillRect(40,  340, 160, 20);
+    ctx.fillRect(230, 270, 130, 20);
+    ctx.fillRect(390, 200, 100, 20);
+    ctx.fillRect(100, 180, 110, 20);
+
+    // Player (blue)
+    ctx.fillStyle = '#0088FF';
+    ctx.fillRect(70, 305, 20, 35);
+
+    // Enemy (green)
+    ctx.fillStyle = '#00FF00';
+    ctx.fillRect(260, 248, 20, 22);
+
+    return c.toDataURL('image/png');
+}
+
+async function testImageGen() {
+    const btn = document.getElementById('btn-test-gen');
+    btn.textContent = 'Generating...';
+    btn.disabled = true;
+
+    const wiremesh = _makeStaticWiremesh();
+    const emotion  = 'ANGRY';
+    const p        = PROMPTS[emotion];
+
+    console.log('[test-gen] Sending static wiremesh to Replicate for ANGRY...');
+    setGenDot(true);
+
+    try {
+        const resp = await fetch(`${SERVER_URL}/generate`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                version: REPLICATE_MODEL_VERSION,
+                input: {
+                    image:            wiremesh,
+                    prompt:           p.pos + ', best quality, extremely detailed',
+                    a_prompt:         'best quality, game art, vivid, detailed',
+                    n_prompt:         p.neg,
+                    num_samples:      '1',
+                    image_resolution: '512',
+                    ddim_steps:       20,
+                    scale:            9.0,
+                    seed:             -1,
+                },
+            }),
+        });
+
+        const data = await resp.json();
+        if (data.image_data_url) {
+            console.log(`[test-gen] SUCCESS (${Math.round(data.image_data_url.length / 1024)}KB) — force-applying to background`);
+            // Force-apply regardless of current emotion state
+            const img = new Image();
+            img.onload = () => {
+                console.log(`[test-gen] Image decoded: ${img.naturalWidth}x${img.naturalHeight}px`);
+                game._applyImage(img);
+            };
+            img.onerror = () => console.error('[test-gen] Image failed to decode');
+            img.src = data.image_data_url;
+        } else {
+            console.error('[test-gen] FAILED:', data.error ?? data);
+        }
+    } catch (e) {
+        console.error('[test-gen] Request error:', e.message);
+    } finally {
+        setGenDot(false);
+        btn.textContent = 'Test Image Gen';
+        btn.disabled = false;
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// FADE TEST  — generates two dummy images locally, no API needed
+// ════════════════════════════════════════════════════════════
+
+function _makeDummyImage(label, bgColor, textColor = '#fff') {
+    const c = document.createElement('canvas');
+    c.width = 800; c.height = 400;
+    const ctx = c.getContext('2d');
+
+    // Background fill
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, 800, 400);
+
+    // Gradient overlay for visual interest
+    const grad = ctx.createLinearGradient(0, 0, 800, 400);
+    grad.addColorStop(0, 'rgba(0,0,0,0.4)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 800, 400);
+
+    // Label
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 48px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, 400, 210);
+    ctx.font = '20px monospace';
+    ctx.fillText('FADE TEST — bg rendering OK', 400, 260);
+
+    return c.toDataURL('image/png');
+}
+
+function testFade() {
+    const img1 = _makeDummyImage('IMAGE 1 — ORANGE', '#b84a00');
+    const img2 = _makeDummyImage('IMAGE 2 — TEAL',   '#006b5e');
+
+    console.log('[test] Fading in image 1...');
+    game._onImageReady(img1, 'NEUTRAL');
+
+    setTimeout(() => {
+        console.log('[test] Fading in image 2...');
+        game._onImageReady(img2, 'HAPPY');
+    }, 4000);
+}
+
+
+// ════════════════════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════════════════════
+
+const game = new OpenWorldEngine('gameCanvas');
+game.start();
+</script>
+
+</body>
+</html>
