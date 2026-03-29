@@ -4,132 +4,81 @@
     <meta charset="UTF-8">
     <title>Emotion Platformer</title>
     <style>
-        body {
-            margin: 0;
-            background: #111;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            font-family: monospace;
-        }
+        body { margin: 0; background: #111; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; color: white; font-family: monospace; }
 
-        #game-wrapper {
-            position: relative;
-            width: 800px;
-            height: 400px;
-        }
+        #game-wrapper { position: relative; width: 512px; height: 512px; }
 
-        canvas#gameCanvas {
+        canvas {
             display: block;
-            width: 800px;
-            height: 400px;
-            border: 2px solid #444;
+            width: 512px; height: 512px;
+            border: 10px solid #333; border-radius: 5px;
+            box-shadow: 0px 10px 30px rgba(0,0,0,0.8);
         }
 
-        /* ── UI overlay (pointer-events: none so it doesn't steal input) ── */
+        /* ── UI overlay (non-interactive) ── */
         #ui-overlay {
-            position: absolute;
-            top: 0; left: 0;
+            position: absolute; top: 0; left: 0;
             width: 100%; height: 100%;
             pointer-events: none;
         }
-
         #emotion-badge {
-            position: absolute;
-            top: 12px; left: 12px;
-            background: rgba(0,0,0,0.72);
-            color: #fff;
-            padding: 6px 14px;
-            border-radius: 4px;
-            font-size: 14px;
-            border-left: 4px solid #888;
-            transition: border-color 0.5s, color 0.5s;
-            letter-spacing: 0.05em;
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.65); color: #fff;
+            padding: 5px 12px; border-radius: 4px; font-size: 13px;
+            border-left: 3px solid #888;
+            transition: border-color 0.5s;
         }
-
-        /* pulsing dot shown while Replicate is generating */
         #gen-dot {
-            position: absolute;
-            top: 16px; right: 14px;
-            width: 10px; height: 10px;
-            border-radius: 50%;
-            background: transparent;
-            transition: background 0.3s;
+            position: absolute; top: 14px; right: 12px;
+            width: 9px; height: 9px; border-radius: 50%;
+            background: transparent; transition: background 0.3s;
         }
-        #gen-dot.generating {
-            background: #ff8800;
-            animation: dotpulse 0.9s ease-in-out infinite;
-        }
-        #gen-dot.done {
-            background: #44ff88;
-        }
+        #gen-dot.generating { background: #ff8800; animation: dotpulse 0.9s ease-in-out infinite; }
+        #gen-dot.done       { background: #44ff88; }
         @keyframes dotpulse {
-            0%, 100% { transform: scale(1);   opacity: 1; }
-            50%       { transform: scale(1.6); opacity: 0.5; }
+            0%,100% { transform: scale(1); opacity: 1; }
+            50%     { transform: scale(1.7); opacity: 0.4; }
         }
-
-        /* thin stress bar at bottom of canvas */
         #stress-track {
-            position: absolute;
-            bottom: 0; left: 0; right: 0;
-            height: 4px;
-            background: rgba(0,0,0,0.4);
+            position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
+            background: rgba(0,0,0,0.3);
         }
-        #stress-fill {
-            height: 100%;
-            width: 0%;
-            background: #44ff88;
-            transition: width 0.4s, background 0.5s;
-            border-radius: 0 2px 2px 0;
-        }
+        #stress-fill { height: 100%; width: 0%; background: #44ff88; transition: width 0.4s, background 0.5s; }
 
-        /* ── Controls row below canvas ── */
-        #controls {
-            margin-top: 10px;
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
+        /* ── Below-canvas UI ── */
+        #debugUI  { width: 512px; display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
+        .raw-data { color: #ff5555; } .visual-data { color: #55ff55; }
+        .controls { width: 512px; text-align: center; color: #888; font-size: 12px; margin-top: 4px; }
+        #buttons  { display: flex; gap: 8px; margin-top: 8px; }
         button {
-            background: #222;
-            color: #ccc;
-            border: 1px solid #555;
-            padding: 6px 16px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-family: monospace;
-            font-size: 12px;
+            background: #222; color: #ccc; border: 1px solid #555;
+            padding: 5px 13px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px;
         }
         button:hover { background: #333; color: #fff; }
         button.active { border-color: #ff8800; color: #ff8800; }
-
-        #hint {
-            color: #555;
-            font-size: 11px;
-        }
     </style>
 </head>
 <body>
 
 <div id="game-wrapper">
-    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <canvas id="gameCanvas" width="512" height="512"></canvas>
     <div id="ui-overlay">
         <div id="emotion-badge">😐 NEUTRAL</div>
         <div id="gen-dot"></div>
-        <div id="stress-track">
-            <div id="stress-fill"></div>
-        </div>
+        <div id="stress-track"><div id="stress-fill"></div></div>
     </div>
 </div>
 
-<div id="controls">
-    <button id="btn-demo" onclick="toggleDemo()">Demo Mode</button>
+<div id="debugUI">
+    <span class="raw-data"  id="rawLabel">Raw Sensor: 0%</span>
+    <span class="visual-data" id="visualLabel">Screen Lerp: 0%</span>
+</div>
+<div class="controls">ARROWS: Move/Jump/Swim &nbsp;|&nbsp; Z: Dash &nbsp;|&nbsp; X: Sword Slice</div>
+<div id="buttons">
+    <button id="btn-demo"     onclick="toggleDemo()">Demo Mode</button>
     <button onclick="game.forceRegen()">Regenerate Now</button>
     <button onclick="testFade()">Test Fade</button>
     <button id="btn-test-gen" onclick="testImageGen()">Test Image Gen</button>
-    <span id="hint">↑ / Space = jump &nbsp; ← → = move</span>
 </div>
 
 <script>
@@ -139,231 +88,63 @@
 
 const SERVER_URL = 'http://localhost:8765';
 
-// ControlNet seg model on Replicate (jagilley/controlnet-seg).
-// Auto-segments the input image via Uniformer, then generates conditioned on those segments.
-// https://replicate.com/jagilley/controlnet-seg
-const REPLICATE_MODEL_VERSION =
-    'f967b165f4cd2e151d11e7450a8214e5d22ad2007f042f2f891ca3981dbfba0d';
+// Stability AI SDXL — pure text-to-image, no ControlNet needed
+// https://replicate.com/stability-ai/sdxl
+const REPLICATE_MODEL_VERSION = '7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc';
 
-// Semantic colors sent to ControlNet as the conditioning image
-const WIRE = {
-    background: '#000000',
-    platform:   '#FF0000',
-    ground:     '#FF8800',
-    player:     '#0088FF',
-    enemy:      '#00FF00',
-};
-
-// Per-emotion ControlNet prompts
 const PROMPTS = {
     HAPPY: {
-        pos: 'candy kingdom 2d platformer, pastel rainbow sky, cotton candy terrain, bubbly colorful clouds, whimsical, saturated, cute cartoon game art, side view',
-        neg: 'dark, gritty, realistic, horror, monochrome, blurry, ugly',
-    },
-    SAD: {
-        pos: 'drowned ruins 2d platformer, heavy rain, dark blue sky, crumbling stone, dead trees, desaturated, melancholy, game art, side view',
-        neg: 'bright, colorful, happy, warm, sunny, blurry, ugly',
-    },
-    ANGRY: {
-        pos: 'volcanic hellscape 2d platformer, blood red sky, ash clouds, lava cracks, obsidian walls, fire, chaotic dark, game art, side view',
-        neg: 'peaceful, pastel, cute, calm, blurry, ugly',
+        pos: 'candy kingdom 2d platformer game, pastel rainbow sky, cotton candy terrain, colorful floating islands, whimsical saturated cartoon, side view, game background art',
+        neg: 'dark, gritty, horror, monochrome, blurry, ugly, text, watermark',
     },
     NEUTRAL: {
-        pos: 'temperate forest 2d platformer, soft blue sky, green hills, stone terrain, natural adventure game art, side view',
-        neg: 'extreme, dramatic, horror, blurry, ugly',
+        pos: 'temperate forest 2d platformer game, soft blue sky, green hills, stone platforms, natural adventure, calm, side view, game background art',
+        neg: 'extreme, horror, blurry, ugly, text, watermark',
+    },
+    SAD: {
+        pos: 'drowned ruins 2d platformer game, heavy rain, dark blue sky, crumbling stone, dead trees, desaturated melancholy, flooded, side view, game background art',
+        neg: 'bright, colorful, warm, sunny, blurry, ugly, text, watermark',
+    },
+    ANGRY: {
+        pos: 'volcanic hellscape 2d platformer game, blood red sky, ash clouds, lava cracks, obsidian walls, fire demons, chaotic dark, side view, game background art',
+        neg: 'peaceful, pastel, cute, calm, blurry, ugly, text, watermark',
     },
 };
 
-// UI colours per emotion state
-const UI_COLORS = {
-    HAPPY:   '#ffdd44',
-    SAD:     '#4499ff',
-    ANGRY:   '#ff4422',
-    NEUTRAL: '#44ff88',
-};
+const UI_COLORS = { HAPPY: '#ffdd44', NEUTRAL: '#44ff88', SAD: '#4499ff', ANGRY: '#ff4422' };
+const UI_LABELS = { HAPPY: '😊 HAPPY', NEUTRAL: '😐 NEUTRAL', SAD: '😢 SAD', ANGRY: '😠 ANGRY' };
 
-const UI_LABELS = {
-    HAPPY:   '😊 HAPPY',
-    SAD:     '😢 SAD',
-    ANGRY:   '😠 ANGRY',
-    NEUTRAL: '😐 NEUTRAL',
-};
+// Stress thresholds matching the palette blend points in updateVisuals()
+const STRESS_THRESHOLDS = { HAPPY: 0.22, NEUTRAL: 0.47, SAD: 0.80 };
 
 
 // ════════════════════════════════════════════════════════════
-// STRESS DIRECTOR  (adapted from stress_states.jsx)
-// Maps raw stress + Python emotion label → HAPPY/NEUTRAL/SAD/ANGRY
+// IMAGE GENERATOR  — one in-flight request at a time, per-emotion cache
 // ════════════════════════════════════════════════════════════
 
-class StressDirector {
-    constructor() {
-        this.stressBuffer   = [];
-        this.bufferSize     = 10;
-        this.currentState   = 'NEUTRAL';
-        this.lastChangeTime = 0;
-        this.minDuration    = 2000; // ms before we allow another transition
-        this.hysteresis     = 0.07;
-
-        this.thresholds = {
-            HAPPY:   { max: 0.15 },
-            NEUTRAL: { min: 0.10, max: 0.35 },
-            SAD:     { min: 0.30, max: 0.65 },
-            ANGRY:   { min: 0.60, max: 1.0  },
-        };
-
-        // Set by caller: (newState, oldState, avgStress) => void
-        this.onStateChange = null;
-    }
-
-    // Maps Python emotion strings to lower-case mood categories
-    _mapEmotion(label) {
-        return {
-            Happy:   'happy',
-            Sad:     'sad',
-            Angry:   'angry',
-            Disgust: 'angry',
-            Fear:    'angry',
-            Neutral: 'neutral',
-            Surprise:'neutral',
-        }[label] ?? 'neutral';
-    }
-
-    update(rawStress, pythonLabel) {
-        const mood = this._mapEmotion(pythonLabel);
-
-        this.stressBuffer.push(rawStress);
-        if (this.stressBuffer.length > this.bufferSize) this.stressBuffer.shift();
-        if (this.stressBuffer.length < this.bufferSize) return this.currentState;
-
-        const avg = this.stressBuffer.reduce((a, b) => a + b) / this.stressBuffer.length;
-        const now = Date.now();
-        if (now - this.lastChangeTime < this.minDuration) return this.currentState;
-
-        const T = this.thresholds;
-        const H = this.hysteresis;
-        let next = this.currentState;
-
-        if (this.currentState === 'HAPPY') {
-            if (avg > T.HAPPY.max + H && mood === 'neutral') next = 'NEUTRAL';
-        } else if (this.currentState === 'NEUTRAL') {
-            if      (avg > T.NEUTRAL.max + H && mood === 'sad')   next = 'SAD';
-            else if (avg < T.NEUTRAL.min - H && mood === 'happy') next = 'HAPPY';
-        } else if (this.currentState === 'SAD') {
-            if      (avg > T.SAD.max + H && (mood === 'angry'))   next = 'ANGRY';
-            else if (avg < T.SAD.min - H && mood === 'neutral')   next = 'NEUTRAL';
-        } else if (this.currentState === 'ANGRY') {
-            if      (avg < T.ANGRY.min - H && mood === 'sad')     next = 'SAD';
-            else if (avg < T.NEUTRAL.max - H && mood === 'neutral') next = 'NEUTRAL';
-        }
-
-        if (next !== this.currentState) {
-            const prev = this.currentState;
-            this.currentState   = next;
-            this.lastChangeTime = now;
-            console.log(`[mood] ${prev} → ${next}  (avg stress ${Math.round(avg * 100)}%)`);
-            if (this.onStateChange) this.onStateChange(next, prev, avg);
-        }
-
-        return this.currentState;
-    }
-}
-
-
-// ════════════════════════════════════════════════════════════
-// WIREMESH RENDERER
-// Draws the currently visible game area as a semantic color map
-// (512 × 512) ready to be sent to ControlNet as the conditioning image.
-// ════════════════════════════════════════════════════════════
-
-class WiremeshRenderer {
-    constructor() {
-        this.canvas = document.createElement('canvas');
-        this.canvas.width  = 512;
-        this.canvas.height = 512;
-        this.ctx = this.canvas.getContext('2d');
-    }
-
-    /**
-     * Renders the current visible game area to a 512×512 semantic map.
-     * Returns a base64 PNG data URL.
-     */
-    render(entities, player, cameraX, groundY, gameW, gameH) {
-        const ctx   = this.ctx;
-        const OUT_W = this.canvas.width;
-        const OUT_H = this.canvas.height;
-        const sx    = OUT_W / gameW;   // scale factors
-        const sy    = OUT_H / gameH;
-
-        ctx.clearRect(0, 0, OUT_W, OUT_H);
-
-        // Background
-        ctx.fillStyle = WIRE.background;
-        ctx.fillRect(0, 0, OUT_W, OUT_H);
-
-        // Ground strip
-        ctx.fillStyle = WIRE.ground;
-        ctx.fillRect(0, groundY * sy, OUT_W, OUT_H);
-
-        // Platforms + enemies (world → screen → scaled)
-        for (const e of entities) {
-            const ex = (e.x - cameraX) * sx;
-            const ey = e.y * sy;
-            const ew = e.width  * sx;
-            const eh = e.height * sy;
-
-            if (ex + ew < 0 || ex > OUT_W) continue; // fully off-screen
-
-            ctx.fillStyle = e.type === 'platform' ? WIRE.platform : WIRE.enemy;
-            ctx.fillRect(ex, ey, ew, eh);
-        }
-
-        // Player
-        ctx.fillStyle = WIRE.player;
-        ctx.fillRect(
-            (player.x - cameraX) * sx,
-            player.y * sy,
-            player.width  * sx,
-            player.height * sy,
-        );
-
-        return this.canvas.toDataURL('image/png');
-    }
-}
-
-
-// ════════════════════════════════════════════════════════════
-// IMAGE GENERATOR
-// Queues wiremesh → Replicate requests.  One in-flight at a time.
-// Newer high-priority requests (emotion change) jump to the front.
-// ════════════════════════════════════════════════════════════
-
-const GEN_COOLDOWN_MS = 15000; // minimum ms between generation requests
+const GEN_COOLDOWN_MS = 15000;
 
 class ImageGenerator {
     constructor() {
         this.busy        = false;
         this.queue       = [];
         this.lastGenTime = 0;
-        // (imageDataUrl, emotion) => void
-        this.onImageReady = null;
+        this.onImageReady = null; // (dataUrl, emotion) => void
     }
 
-    enqueue(wiremeshDataUrl, emotion, priority = false) {
-        // Only keep one pending item — always the latest
-        this.queue = [];
-        this.queue.push({ wiremeshDataUrl, emotion, priority });
+    enqueue(emotion, priority = false) {
+        this.queue = []; // always keep only the latest request
+        this.queue.push({ emotion, priority });
         this._process();
     }
 
     async _process() {
         if (this.busy || this.queue.length === 0) return;
 
-        // Enforce cooldown — priority requests jump to front of queue but still wait
-        const { wiremeshDataUrl, emotion } = this.queue[0];
+        const { emotion } = this.queue[0];
         const elapsed = Date.now() - this.lastGenTime;
         if (elapsed < GEN_COOLDOWN_MS) {
-            const wait = GEN_COOLDOWN_MS - elapsed;
-            setTimeout(() => this._process(), wait);
+            setTimeout(() => this._process(), GEN_COOLDOWN_MS - elapsed);
             return;
         }
 
@@ -373,7 +154,7 @@ class ImageGenerator {
 
         const p = PROMPTS[emotion] ?? PROMPTS.NEUTRAL;
         setGenDot(true);
-        console.log(`[gen] Requesting image for ${emotion}...`);
+        console.log(`[gen] Requesting SDXL image for ${emotion}...`);
 
         try {
             const resp = await fetch(`${SERVER_URL}/generate`, {
@@ -382,15 +163,13 @@ class ImageGenerator {
                 body: JSON.stringify({
                     version: REPLICATE_MODEL_VERSION,
                     input: {
-                        image:            wiremeshDataUrl,
-                        prompt:           p.pos + ', best quality, extremely detailed',
-                        a_prompt:         'best quality, game art, vivid, detailed',
-                        n_prompt:         p.neg,
-                        num_samples:      '1',
-                        image_resolution: '512',
-                        ddim_steps:       20,
-                        scale:            9.0,
-                        seed:             -1,
+                        prompt:              p.pos,
+                        negative_prompt:     p.neg,
+                        width:               512,
+                        height:              512,
+                        num_inference_steps: 20,
+                        guidance_scale:      7.5,
+                        scheduler:           'K_EULER',
                     },
                 }),
             });
@@ -400,15 +179,14 @@ class ImageGenerator {
                 console.warn('[gen] Server error:', err.error ?? resp.status);
                 return;
             }
-
             const data = await resp.json();
             if (data.image_data_url && this.onImageReady) {
                 this.onImageReady(data.image_data_url, emotion);
             } else if (data.error) {
                 console.warn('[gen] Generation error:', data.error);
             }
-        } catch (err) {
-            console.warn('[gen] Request failed:', err.message);
+        } catch (e) {
+            console.warn('[gen] Request failed:', e.message);
         } finally {
             this.busy = false;
             setGenDot(false);
@@ -419,33 +197,65 @@ class ImageGenerator {
 
 
 // ════════════════════════════════════════════════════════════
-// UI HELPERS
+// WIREMESH RENDERER  — kept for testImageGen, not used in main pipeline
 // ════════════════════════════════════════════════════════════
 
-function setGenDot(generating) {
-    const el = document.getElementById('gen-dot');
-    el.className = generating ? 'generating' : 'done';
-    if (!generating) {
-        setTimeout(() => { if (el.className === 'done') el.className = ''; }, 2500);
+class WiremeshRenderer {
+    constructor() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.canvas.height = 512;
+        this.ctx = this.canvas.getContext('2d');
+    }
+
+    render(entities, player, cameraX, groundY, gameW, gameH) {
+        const ctx = this.ctx;
+        const sx = 512 / gameW, sy = 512 / gameH;
+
+        ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 512, 512);
+        ctx.fillStyle = '#FF8800'; ctx.fillRect(0, groundY * sy, 512, 512);
+
+        for (const e of entities) {
+            const ex = (e.x - cameraX) * sx, ey = e.y * sy;
+            const ew = e.width * sx,           eh = e.height * sy;
+            if (ex + ew < 0 || ex > 512) continue;
+            if (e.type === 'platform' || e.type === 'ground') {
+                ctx.fillStyle = e.type === 'ground' ? '#FF8800' : '#FF0000';
+            } else if (e.type === 'enemy_ground' || e.type === 'enemy_flying') {
+                ctx.fillStyle = '#00FF00';
+            } else continue;
+            ctx.fillRect(ex, ey, ew, eh);
+        }
+        ctx.fillStyle = '#0088FF';
+        ctx.fillRect((player.x - cameraX) * sx, player.y * sy, player.width * sx, player.height * sy);
+        return this.canvas.toDataURL('image/png');
     }
 }
 
-function updateEmotionUI(state, stress) {
+
+// ════════════════════════════════════════════════════════════
+// UI HELPERS
+// ════════════════════════════════════════════════════════════
+
+function setGenDot(on) {
+    const el = document.getElementById('gen-dot');
+    el.className = on ? 'generating' : 'done';
+    if (!on) setTimeout(() => { if (el.className === 'done') el.className = ''; }, 2500);
+}
+
+function updateEmotionUI(emotion, stress) {
     const badge = document.getElementById('emotion-badge');
     const fill  = document.getElementById('stress-fill');
-    const color = UI_COLORS[state] ?? '#888';
-
-    badge.textContent        = UI_LABELS[state]  ?? state;
-    badge.style.borderColor  = color;
-    badge.style.color        = '#fff';
-
-    fill.style.width      = `${Math.round(stress * 100)}%`;
-    fill.style.background = color;
+    const color = UI_COLORS[emotion] ?? '#888';
+    badge.textContent       = UI_LABELS[emotion] ?? emotion;
+    badge.style.borderColor = color;
+    fill.style.width        = `${Math.round(stress * 100)}%`;
+    fill.style.background   = color;
 }
 
 
 // ════════════════════════════════════════════════════════════
-// GAME ENGINE
+// GAME ENGINE  (from main — game logic untouched)
+// + AI background layer integrated
 // ════════════════════════════════════════════════════════════
 
 class OpenWorldEngine {
@@ -453,152 +263,381 @@ class OpenWorldEngine {
         this.canvas = document.getElementById(canvasId);
         this.ctx    = this.canvas.getContext('2d');
 
-        this.keys    = { right: false, left: false, up: false };
-        this.cameraX = 0;
-        this.groundY = 350;
+        this.keys = { right: false, left: false, up: false, dash: false, attack: false };
+        this.cameraX    = 0;
+        this.baseGroundY = 420;
 
-        this.chunkSize    = 1000;
+        this.chunkSize    = 1200;
         this.worldMap     = new Map();
         this.activeEntities = [];
 
-        // Physics colours (shown transparently when bg image exists)
-        this.colors = {
-            player:   '#0055ff',
-            platform: '#228B22',
-            ground:   '#8B4513',
-            enemy:    '#cc2200',
+        this.player = {
+            x: 256, y: 200, width: 24, height: 36,
+            vx: 0, vy: 0,
+            speed: 1.75, jump: -7.07, grounded: false, facing: 1,
+            isDashing: false, dashTimer: 0, dashSpeed: 4.0,
+            dashCooldown: 0, hasAirDashed: false,
+            isAttacking: false, attackTimer: 0,
         };
 
-        this.player = {
-            x: 400, y: 200, width: 20, height: 30,
-            vx: 0, vy: 0, speed: 5, jump: -12, grounded: false,
+        this.palettes = {
+            HAPPY:   { bg: [135,206,235], ground: [144,238,144], platform: [255,215,0],   enemy: [255,105,180], player: [255,255,255], water: [0,191,255],   attack: [255,255,255] },
+            NEUTRAL: { bg: [176,196,222], ground: [139,69, 19],  platform: [34, 139,34],  enemy: [220,20, 60],  player: [0,  0,  255], water: [70, 130,180], attack: [200,200,200] },
+            SAD:     { bg: [47, 79, 79],  ground: [25, 25, 112], platform: [112,128,144], enemy: [75, 0,  130], player: [173,216,230], water: [25, 25, 112], attack: [100,100,150] },
+            ANGRY:   { bg: [40, 0,  0],   ground: [70, 0,  0],   platform: [139,0,  0],   enemy: [255,140,0],   player: [255,0,  0],   water: [255,69, 0],   attack: [255,255,0]  },
         };
+
+        this.currentTheme    = this.palettes.NEUTRAL;
+        this.targetStress    = 0;
+        this.visualStress    = 0;
+        this.smoothingFactor = 0.015;
 
         // ── AI background layer ──
-        this.currentEmotion  = 'NEUTRAL';
-        this.currentChunkIdx = 0;
-
-        this.bgImage = null;   // current HTMLImageElement (fully loaded)
-        this.bgAlpha = 0;
-        this.nextBgImage = null;
-        this.nextBgAlpha = 0;
-
-        // Cache: one generated image per emotion — avoids redundant API calls
-        this.emotionImageCache = {};   // emotion → HTMLImageElement
-        this.emotionGenPending = new Set(); // emotions currently being generated
+        this.currentEmotion   = 'NEUTRAL';
+        this.bgImage          = null;
+        this.bgAlpha          = 0;
+        this.nextBgImage      = null;
+        this.nextBgAlpha      = 0;
+        this.emotionImageCache  = {};
+        this.emotionGenPending  = new Set();
 
         this.wiremesh = new WiremeshRenderer();
         this.imageGen = new ImageGenerator();
         this.imageGen.onImageReady = (dataUrl, emotion) => this._onImageReady(dataUrl, emotion);
 
-        this._setupInputs();
+        this.setupInputs();
     }
 
-    _setupInputs() {
-        window.addEventListener('keydown', (e) => {
-            if (e.code === 'ArrowRight') this.keys.right = true;
-            if (e.code === 'ArrowLeft')  this.keys.left  = true;
-            if (e.code === 'ArrowUp' || e.code === 'Space') {
-                e.preventDefault(); // stop Space scrolling the page
-                this.keys.up = true;
+    // ── Stress API (called by SSE stream) ────────────────────
+    setTargetStress(rawPercentage) {
+        this.targetStress = Math.max(0, Math.min(100, rawPercentage)) / 100;
+    }
+
+    // ── Visuals + emotion state detection ────────────────────
+    updateVisuals() {
+        this.visualStress += (this.targetStress - this.visualStress) * this.smoothingFactor;
+        const s = this.visualStress;
+        let t = 0;
+
+        if      (s < 0.22) { t = s / 0.22;          this.currentTheme = this.blendPalettes(this.palettes.HAPPY,   this.palettes.NEUTRAL, t); }
+        else if (s < 0.47) { t = (s-0.22) / 0.25;   this.currentTheme = this.blendPalettes(this.palettes.NEUTRAL, this.palettes.SAD,     t); }
+        else if (s < 0.80) { t = (s-0.47) / 0.33;   this.currentTheme = this.blendPalettes(this.palettes.SAD,     this.palettes.ANGRY,   t); }
+        else               {                          this.currentTheme = this.blendPalettes(this.palettes.ANGRY,   this.palettes.ANGRY,   1); }
+
+        document.getElementById('rawLabel').innerText    = `Raw Sensor: ${Math.round(this.targetStress * 100)}%`;
+        document.getElementById('visualLabel').innerText = `Screen Lerp: ${Math.round(this.visualStress * 100)}%`;
+
+        // Map stress to emotion bucket and trigger image gen on change
+        const emotion = s < 0.22 ? 'HAPPY' : s < 0.47 ? 'NEUTRAL' : s < 0.80 ? 'SAD' : 'ANGRY';
+        if (emotion !== this.currentEmotion) {
+            this.currentEmotion = emotion;
+            updateEmotionUI(emotion, s);
+            if (this.emotionImageCache[emotion]) {
+                this._applyImage(this.emotionImageCache[emotion]);
             }
+            // Auto-gen disabled during testing — uncomment to enable:
+            // else { this._requestGeneration(emotion, true); }
+        }
+    }
+
+    lerp(a, b, t)    { return Math.round(a + (b - a) * t); }
+    lerpRGB(c1,c2,t) { return `rgb(${this.lerp(c1[0],c2[0],t)},${this.lerp(c1[1],c2[1],t)},${this.lerp(c1[2],c2[2],t)})`; }
+    blendPalettes(p1, p2, t) {
+        return {
+            bg:       this.lerpRGB(p1.bg,       p2.bg,       t),
+            ground:   this.lerpRGB(p1.ground,   p2.ground,   t),
+            platform: this.lerpRGB(p1.platform, p2.platform, t),
+            enemy:    this.lerpRGB(p1.enemy,    p2.enemy,    t),
+            player:   this.lerpRGB(p1.player,   p2.player,   t),
+            water:    this.lerpRGB(p1.water,    p2.water,    t),
+            attack:   this.lerpRGB(p1.attack,   p2.attack,   t),
+        };
+    }
+
+    setupInputs() {
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right  = true;
+            if (e.code === 'ArrowLeft')  this.keys.left   = true;
+            if (e.code === 'ArrowUp')  { e.preventDefault(); this.keys.up = true; }
+            if (e.code === 'Space')    { e.preventDefault(); this.keys.up = true; }
+            if (e.code === 'KeyZ')       this.keys.dash   = true;
+            if (e.code === 'KeyX')       this.keys.attack = true;
         });
         window.addEventListener('keyup', (e) => {
-            if (e.code === 'ArrowRight') this.keys.right = false;
-            if (e.code === 'ArrowLeft')  this.keys.left  = false;
+            if (e.code === 'ArrowRight') this.keys.right  = false;
+            if (e.code === 'ArrowLeft')  this.keys.left   = false;
             if (e.code === 'ArrowUp' || e.code === 'Space') this.keys.up = false;
+            if (e.code === 'KeyZ')       this.keys.dash   = false;
+            if (e.code === 'KeyX')       this.keys.attack = false;
         });
     }
 
-    // ── World generation ────────────────────────────────────
+    // ── World generation ─────────────────────────────────────
+    generateChunk(chunkIndex) {
+        let chunkData = [];
+        let currentX = chunkIndex * this.chunkSize;
+        let endX     = currentX + this.chunkSize;
+        let lastY    = this.baseGroundY;
 
-    _generateChunk(idx) {
-        const data = [];
-        const startX = idx * this.chunkSize;
-        const endX   = startX + this.chunkSize;
-        let x = startX + Math.random() * 100;
-
-        while (x < endX - 150) {
-            const w  = Math.random() * 120 + 80;
-            const py = this.groundY - (Math.random() * 100 + 50);
-            data.push({ type: 'platform', x, y: py, width: w, height: 20 });
-
-            if (Math.random() < 0.3) {
-                data.push({ type: 'enemy', x: x + w / 2 - 10, y: py - 20, width: 20, height: 20 });
+        const isOverlapping = (x, y, w, h) => {
+            const buffer = 20;
+            for (let e of chunkData.concat(this.activeEntities)) {
+                if (e.type === 'platform' &&
+                    x < e.x + e.width + buffer && x + w > e.x - buffer &&
+                    y < e.y + e.height + buffer && y + h > e.y - buffer) return true;
             }
-            x += w + Math.random() * 120 + 60;
+            return false;
+        };
+
+        while (currentX < endX) {
+            const isWaterPit    = Math.random() < 0.35;
+            const sectionWidth  = isWaterPit ? Math.random()*150+150 : Math.random()*200+200;
+
+            if (!isWaterPit) {
+                chunkData.push({ type: 'ground', x: currentX, y: this.baseGroundY, width: sectionWidth, height: 100 });
+                lastY = this.baseGroundY;
+            }
+
+            let cursorX = currentX + 30;
+            while (cursorX < currentX + sectionWidth - 80) {
+                const pW   = Math.random()*50 + 50;
+                let   minY = Math.max(lastY - 85, this.baseGroundY - 220);
+                let   maxY = Math.min(lastY + 85, this.baseGroundY - 40);
+                if (isWaterPit) maxY = Math.min(maxY, this.baseGroundY - 80);
+                const pH = minY + Math.random() * (maxY - minY);
+
+                if (!isOverlapping(cursorX, pH, pW, 15)) {
+                    chunkData.push({ type: 'platform', x: cursorX, y: pH, width: pW, height: 15 });
+                    if (Math.random() < 0.5) {
+                        const isStatic = Math.random() < 0.5;
+                        chunkData.push({
+                            type: 'enemy_ground', x: cursorX+pW/2-12, y: pH-24, width: 24, height: 24,
+                            vx: isStatic ? 0 : 0.5, minX: cursorX, maxX: cursorX+pW, dead: false, isStatic,
+                        });
+                    }
+                    lastY = pH;
+                }
+                cursorX += pW + Math.random()*40 + 40;
+            }
+
+            if (isWaterPit && Math.random() < 0.6) {
+                chunkData.push({
+                    type: 'enemy_flying', x: currentX+sectionWidth/2, y: this.baseGroundY-100, width: 24, height: 24,
+                    startY: this.baseGroundY-100, hoverTime: Math.random()*100, dead: false,
+                });
+            }
+            currentX += sectionWidth;
         }
-        return data;
+        return chunkData;
     }
 
-    _updateChunks() {
+    updateChunks() {
         const ci = Math.floor(this.player.x / this.chunkSize);
         this.activeEntities = [];
-
-        for (const idx of [ci - 1, ci, ci + 1]) {
-            if (!this.worldMap.has(idx)) {
-                this.worldMap.set(idx, this._generateChunk(idx));
-            }
+        for (const idx of [ci-1, ci, ci+1]) {
+            if (!this.worldMap.has(idx)) this.worldMap.set(idx, this.generateChunk(idx));
             this.activeEntities.push(...this.worldMap.get(idx));
         }
-        this.currentChunkIdx = ci;
     }
 
-    // ── Emotion + generation ─────────────────────────────────
+    checkIntersection(r1, r2) {
+        return !(r2.x >= r1.x+r1.width || r2.x+r2.width <= r1.x || r2.y >= r1.y+r1.height || r2.y+r2.height <= r1.y);
+    }
 
-    setEmotion(state, stress) {
-        const changed = state !== this.currentEmotion;
-        this.currentEmotion = state;
-        updateEmotionUI(state, stress);
+    // ── Physics (from main — untouched) ──────────────────────
+    updatePhysics() {
+        if (this.keys.right)      { this.player.vx =  this.player.speed; this.player.facing =  1; }
+        else if (this.keys.left)  { this.player.vx = -this.player.speed; this.player.facing = -1; }
+        else                        this.player.vx = 0;
 
-        if (changed) {
-            // If we already have a cached image for this emotion, apply it immediately
-            if (this.emotionImageCache[state]) {
-                console.log(`[bg] Cache hit for ${state} — instant swap`);
-                this._applyImage(this.emotionImageCache[state]);
+        if (this.player.dashCooldown > 0) this.player.dashCooldown--;
+
+        if (this.keys.dash && this.player.dashCooldown === 0 && !this.player.isDashing) {
+            if (this.player.grounded || (!this.player.grounded && !this.player.hasAirDashed)) {
+                this.player.isDashing = true; this.player.dashTimer = 18; this.player.dashCooldown = 60;
+                this.player.vy = 0;
+                if (!this.player.grounded) this.player.hasAirDashed = true;
             }
-            // Auto-generation on emotion change disabled during testing.
-            // Re-enable by uncommenting:
-            // else { this._requestGeneration(state, true); }
+        }
+        if (this.player.isDashing) {
+            this.player.vx = this.player.dashSpeed * this.player.facing;
+            if (--this.player.dashTimer <= 0) this.player.isDashing = false;
+        }
+
+        this.player.x += this.player.vx;
+        for (const e of this.activeEntities) {
+            if (e.type === 'ground' && this.checkIntersection(this.player, e)) {
+                this.player.x  = this.player.vx > 0 ? e.x - this.player.width : e.x + e.width;
+                this.player.vx = 0;
+            }
+        }
+
+        if (!this.player.isDashing) this.player.vy += 0.2;
+        if (this.keys.up && this.player.grounded) { this.player.vy = this.player.jump; this.player.grounded = false; }
+
+        this.player.y += this.player.vy;
+        this.player.grounded = false;
+        for (const e of this.activeEntities) {
+            if ((e.type === 'ground' || e.type === 'platform') &&
+                this.player.vy >= 0 &&
+                this.player.x + this.player.width > e.x && this.player.x < e.x + e.width &&
+                this.player.y + this.player.height - this.player.vy <= e.y + 2 &&
+                this.player.y + this.player.height >= e.y) {
+                this.player.grounded = true; this.player.hasAirDashed = false;
+                this.player.vy = 0; this.player.y = e.y - this.player.height;
+            }
+        }
+
+        this.cameraX = this.player.x - this.canvas.width / 2;
+
+        const waterSurface = this.baseGroundY + 20;
+        if (this.player.y > waterSurface) {
+            if (this.visualStress < 0.80) {
+                this.player.vy *= 0.8;
+                if (this.keys.up) this.player.vy = this.player.y < waterSurface+40 ? this.player.jump : -3.5;
+                this.player.hasAirDashed = false;
+            } else {
+                this.player.vy = -10;
+                this.player.hasAirDashed = false;
+            }
+        }
+
+        if (this.keys.attack && this.player.attackTimer <= 0) this.player.attackTimer = 25;
+        if (this.player.attackTimer > 0) this.player.attackTimer--;
+        let attackHitbox = null;
+        if (this.player.attackTimer > 15) {
+            attackHitbox = {
+                x: this.player.facing === 1 ? this.player.x + this.player.width/2 : this.player.x + this.player.width/2 - 45,
+                y: this.player.y - 15, width: 45, height: 50,
+            };
+        }
+        for (const e of this.activeEntities) {
+            if ((e.type === 'enemy_ground' || e.type === 'enemy_flying') && !e.dead) {
+                if (e.type === 'enemy_ground') {
+                    e.x += e.vx;
+                    if (e.x < e.minX || e.x + e.width > e.maxX) e.vx *= -1;
+                } else {
+                    const prevY = e.y;
+                    e.hoverTime += 0.015;
+                    e.y = e.startY + Math.sin(e.hoverTime) * 15;
+                    for (const p of this.activeEntities) {
+                        if ((p.type === 'platform' || p.type === 'ground') && this.checkIntersection(e, p)) {
+                            e.y = prevY;
+                            e.startY += e.y < p.y ? -0.5 : 0.5;
+                            break;
+                        }
+                    }
+                }
+                if      (attackHitbox && this.checkIntersection(attackHitbox, e)) { e.dead = true; this.player.vy = -3; this.player.hasAirDashed = false; }
+                else if (this.checkIntersection(this.player, e))                   { this.player.vy = -4; this.player.vx = -4 * this.player.facing; }
+            }
         }
     }
 
-    forceRegen() {
-        // Clear cache for current emotion and regenerate
-        delete this.emotionImageCache[this.currentEmotion];
-        this.emotionGenPending.delete(this.currentEmotion);
-        this._requestGeneration(this.currentEmotion, true);
+    // ── Draw ─────────────────────────────────────────────────
+    draw() {
+        const ctx = this.ctx;
+        const W = this.canvas.width, H = this.canvas.height;
+
+        // 1. Theme background (always drawn as base)
+        ctx.fillStyle = this.currentTheme.bg;
+        ctx.fillRect(0, 0, W, H);
+
+        // 2. AI background image fades in on top
+        if (this.bgImage) {
+            ctx.globalAlpha = this.bgAlpha;
+            ctx.drawImage(this.bgImage, 0, 0, W, H);
+            ctx.globalAlpha = 1;
+        }
+        if (this.nextBgImage) {
+            this.nextBgAlpha = Math.min(1, this.nextBgAlpha + 0.02);
+            ctx.globalAlpha  = this.nextBgAlpha;
+            ctx.drawImage(this.nextBgImage, 0, 0, W, H);
+            ctx.globalAlpha  = 1;
+            if (this.nextBgAlpha >= 1) {
+                this.bgImage = this.nextBgImage; this.bgAlpha = 1;
+                this.nextBgImage = null; this.nextBgAlpha = 0;
+            }
+        }
+
+        // 3. Game world
+        const hasBg = !!(this.bgImage || this.nextBgImage);
+        ctx.save();
+        ctx.translate(-this.cameraX, 0);
+
+        // Water / lava
+        ctx.fillStyle = this.currentTheme.water;
+        ctx.globalAlpha = hasBg ? 0.55 : 1;
+        ctx.fillRect(this.cameraX - 100, this.baseGroundY + 20, W + 200, H);
+        ctx.globalAlpha = 1;
+
+        // Platforms & ground
+        for (const e of this.activeEntities) {
+            if (e.type === 'ground' || e.type === 'platform') {
+                ctx.fillStyle   = e.type === 'ground' ? this.currentTheme.ground : this.currentTheme.platform;
+                ctx.globalAlpha = hasBg ? 0.45 : 1;
+                ctx.fillRect(e.x, e.y, e.width, e.height);
+                if (hasBg) {
+                    ctx.globalAlpha  = 0.7;
+                    ctx.strokeStyle  = 'rgba(255,255,255,0.4)';
+                    ctx.lineWidth    = 1;
+                    ctx.strokeRect(e.x, e.y, e.width, e.height);
+                }
+                ctx.globalAlpha = 1;
+            } else if ((e.type === 'enemy_ground' || e.type === 'enemy_flying') && !e.dead) {
+                ctx.fillStyle = this.currentTheme.enemy;
+                ctx.fillRect(e.x, e.y, e.width, e.height);
+                if (e.type === 'enemy_ground' && e.isStatic) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                    ctx.fillRect(e.x+8, e.y+8, 8, 8);
+                }
+                if (e.type === 'enemy_flying') {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.fillRect(e.x-5, e.y+5, 34, 10);
+                }
+            }
+        }
+
+        // Player
+        ctx.fillStyle = (this.player.dashCooldown > 0 && Math.floor(Date.now()/100)%2===0)
+            ? 'rgba(255,255,255,0.5)' : this.currentTheme.player;
+        ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+
+        // Sword slice wedge
+        if (this.player.attackTimer > 15) {
+            const progress    = (25 - this.player.attackTimer) / 10;
+            const cx          = this.player.x + this.player.width / 2;
+            const cy          = this.player.y + this.player.height / 2;
+            const startAngle  = -Math.PI / 2;
+            const endAngle    = this.player.facing === 1 ? 0 : -Math.PI;
+            ctx.fillStyle     = this.currentTheme.attack;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, 45, startAngle, startAngle + (endAngle - startAngle) * progress, this.player.facing === -1);
+            ctx.fill();
+        }
+
+        ctx.restore();
     }
 
+    // ── AI image management ───────────────────────────────────
     _requestGeneration(emotion, priority = false) {
-        // Skip if already generating this emotion
         if (this.emotionGenPending.has(emotion)) return;
         this.emotionGenPending.add(emotion);
-
-        const wiremeshData = this.wiremesh.render(
-            this.activeEntities,
-            this.player,
-            this.cameraX,
-            this.groundY,
-            this.canvas.width,
-            this.canvas.height,
-        );
-        this.imageGen.enqueue(wiremeshData, emotion, priority);
+        this.imageGen.enqueue(emotion, priority);
     }
 
     _onImageReady(dataUrl, emotion) {
-        console.log(`[bg] Image received for ${emotion} (${Math.round(dataUrl.length / 1024)}KB)`);
+        console.log(`[bg] Image received for ${emotion} (${Math.round(dataUrl.length/1024)}KB)`);
         this.emotionGenPending.delete(emotion);
-
-        const img = new Image();
-        img.onload = () => {
+        const img   = new Image();
+        img.onload  = () => {
             console.log(`[bg] Cached ${emotion}: ${img.naturalWidth}x${img.naturalHeight}px`);
             this.emotionImageCache[emotion] = img;
-            // Only apply if this is still the active emotion
             if (emotion === this.currentEmotion) this._applyImage(img);
         };
         img.onerror = () => console.error(`[bg] Failed to decode image for ${emotion}`);
-        img.src = dataUrl;
+        img.src     = dataUrl;
     }
 
     _applyImage(img) {
@@ -606,197 +645,71 @@ class OpenWorldEngine {
         this.nextBgAlpha = 0;
     }
 
-    // ── Physics ─────────────────────────────────────────────
-
-    _updatePhysics() {
-        const p = this.player;
-
-        if      (this.keys.right) p.vx =  p.speed;
-        else if (this.keys.left)  p.vx = -p.speed;
-        else                      p.vx =  0;
-
-        if (this.keys.up && p.grounded) {
-            p.vy = p.jump;
-            p.grounded = false;
-        }
-
-        p.vy += 0.6;
-        p.x  += p.vx;
-        p.y  += p.vy;
-
-        this.cameraX = p.x - this.canvas.width / 2;
-        p.grounded   = false;
-
-        // Floor
-        if (p.y + p.height >= this.groundY) {
-            p.y        = this.groundY - p.height;
-            p.vy       = 0;
-            p.grounded = true;
-        }
-
-        // Platforms
-        for (const e of this.activeEntities) {
-            if (e.type !== 'platform') continue;
-            if (
-                p.vy >= 0 &&
-                p.x + p.width  > e.x &&
-                p.x            < e.x + e.width &&
-                p.y + p.height >= e.y &&
-                p.y + p.height <= e.y + p.vy + 2
-            ) {
-                p.grounded = true;
-                p.vy       = 0;
-                p.y        = e.y - p.height;
-            }
-        }
+    forceRegen() {
+        delete this.emotionImageCache[this.currentEmotion];
+        this.emotionGenPending.delete(this.currentEmotion);
+        this._requestGeneration(this.currentEmotion, true);
     }
 
-    // ── Rendering ────────────────────────────────────────────
-
-    _draw() {
-        const ctx = this.ctx;
-        const W   = this.canvas.width;
-        const H   = this.canvas.height;
-
-        ctx.clearRect(0, 0, W, H);
-
-        // Sky fallback (shown when no bg image yet)
-        ctx.fillStyle = '#87CEEB';
-        ctx.fillRect(0, 0, W, H);
-
-        // ── Background image layers ──
-        // Current image (fully faded in or still fading out)
-        if (this.bgImage) {
-            ctx.globalAlpha = this.bgAlpha;
-            ctx.drawImage(this.bgImage, 0, 0, W, H);
-            ctx.globalAlpha = 1;
-        }
-
-        // Next image (fading in over current)
-        if (this.nextBgImage) {
-            this.nextBgAlpha = Math.min(1, this.nextBgAlpha + 0.025);
-            ctx.globalAlpha = this.nextBgAlpha;
-            ctx.drawImage(this.nextBgImage, 0, 0, W, H);
-            ctx.globalAlpha = 1;
-
-            if (this.nextBgAlpha >= 1) {
-                // Swap: next becomes current
-                this.bgImage    = this.nextBgImage;
-                this.bgAlpha    = 1;
-                this.nextBgImage = null;
-                this.nextBgAlpha = 0;
-            }
-        }
-
-        // ── World geometry (semi-transparent over bg) ──
-        const hasBg = !!(this.bgImage || this.nextBgImage);
-
-        ctx.save();
-        ctx.translate(-this.cameraX, 0);
-
-        // Ground
-        ctx.fillStyle = hasBg ? 'rgba(139,69,19,0.35)' : this.colors.ground;
-        ctx.fillRect(this.cameraX - 100, this.groundY, W + 200, H - this.groundY);
-
-        // Entities
-        for (const e of this.activeEntities) {
-            if (e.type === 'platform') {
-                ctx.fillStyle = hasBg ? 'rgba(34,139,34,0.30)' : this.colors.platform;
-                ctx.fillRect(e.x, e.y, e.width, e.height);
-                // Outline so platforms are visible against dark images
-                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-                ctx.lineWidth   = 1;
-                ctx.strokeRect(e.x, e.y, e.width, e.height);
-            } else if (e.type === 'enemy') {
-                ctx.fillStyle = this.colors.enemy;
-                ctx.fillRect(e.x, e.y, e.width, e.height);
-            }
-        }
-
-        // Player
-        ctx.fillStyle = this.colors.player;
-        ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
-
-        ctx.restore();
-    }
-
-    // ── Main loop ────────────────────────────────────────────
-
-    _loop() {
-        this._updateChunks();
-        this._updatePhysics();
-        this._draw();
-        requestAnimationFrame(() => this._loop());
-    }
-
-    start() {
-        this._loop();
-        this._connectEmotionStream();
-        // Auto-generation disabled during testing — use "Test Image Gen" button
-        // to trigger manually. Re-enable by uncommenting the block below.
-        // setTimeout(() => {
-        //     console.log('[bg] Pre-warming all emotion backgrounds...');
-        //     for (const emotion of ['NEUTRAL', 'HAPPY', 'SAD', 'ANGRY']) {
-        //         this._requestGeneration(emotion);
-        //     }
-        // }, 1000);
-    }
-
-    // ── Server-Sent Events from Python server ────────────────
-
+    // ── SSE connection ────────────────────────────────────────
     _connectEmotionStream() {
-        const director = new StressDirector();
-        director.onStateChange = (newState, _oldState, stress) => {
-            this.setEmotion(newState, stress);
-        };
-
         const connect = () => {
             const es = new EventSource(`${SERVER_URL}/emotions`);
-
-            es.onopen = () => console.log('[sse] Connected to emotion stream.');
-
+            es.onopen    = () => console.log('[sse] Connected to emotion stream.');
             es.onmessage = (ev) => {
                 try {
-                    const data = JSON.parse(ev.data);
-                    director.update(data.stress, data.emotion);
-                    // Keep stress bar live even without a state transition
-                    updateEmotionUI(this.currentEmotion, data.stress);
-                } catch { /* ignore parse errors */ }
+                    const { stress, emotion } = JSON.parse(ev.data);
+                    // Feed raw stress into game (0-100 scale)
+                    this.setTargetStress(stress * 100);
+                    updateEmotionUI(this.currentEmotion, stress);
+                } catch { /* ignore */ }
             };
-
             es.onerror = () => {
-                console.warn('[sse] Disconnected — retrying in 3 s');
+                console.warn('[sse] Disconnected — retrying in 3s');
                 es.close();
                 setTimeout(connect, 3000);
             };
         };
-
         connect();
+    }
+
+    // ── Main loop ─────────────────────────────────────────────
+    loop() {
+        this.updateChunks();
+        this.updatePhysics();
+        this.updateVisuals();
+        this.draw();
+        requestAnimationFrame(() => this.loop());
+    }
+
+    start() {
+        this.loop();
+        this._connectEmotionStream();
+        // Pre-warm: auto-generate all 4 emotion backgrounds at startup.
+        // Disabled during testing — uncomment to enable:
+        // setTimeout(() => {
+        //     for (const e of ['NEUTRAL','HAPPY','SAD','ANGRY']) this._requestGeneration(e);
+        // }, 1000);
     }
 }
 
 
 // ════════════════════════════════════════════════════════════
-// DEMO MODE  — auto-cycles emotions every 8 s (great for booths)
+// DEMO MODE
 // ════════════════════════════════════════════════════════════
 
 let _demoInterval = null;
-const DEMO_CYCLE  = ['NEUTRAL', 'HAPPY', 'ANGRY', 'SAD'];
+const DEMO_CYCLE  = ['NEUTRAL','HAPPY','ANGRY','SAD'];
 let   _demoIdx    = 0;
 
 function toggleDemo() {
     const btn = document.getElementById('btn-demo');
-    if (_demoInterval) {
-        clearInterval(_demoInterval);
-        _demoInterval = null;
-        btn.className = '';
-        return;
-    }
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; btn.className = ''; return; }
     btn.className = 'active';
     _demoIdx = 0;
     const tick = () => {
-        game.setEmotion(DEMO_CYCLE[_demoIdx % DEMO_CYCLE.length], 0.5);
-        _demoIdx++;
+        const e = DEMO_CYCLE[_demoIdx++ % DEMO_CYCLE.length];
+        game.setTargetStress({ HAPPY: 5, NEUTRAL: 30, SAD: 55, ANGRY: 90 }[e]);
     };
     tick();
     _demoInterval = setInterval(tick, 8000);
@@ -804,138 +717,94 @@ function toggleDemo() {
 
 
 // ════════════════════════════════════════════════════════════
-// STATIC API TEST  — hardcoded wiremesh, no game state needed
-// Tests the full Replicate pipeline in isolation.
+// STATIC API TEST  — hardcoded wiremesh, isolates Replicate pipeline
 // ════════════════════════════════════════════════════════════
 
 function _makeStaticWiremesh() {
     const c = document.createElement('canvas');
-    c.width = 512; c.height = 512;
+    c.width = c.height = 512;
     const ctx = c.getContext('2d');
-
-    // Black background
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, 512, 512);
-
-    // Ground strip (orange)
-    ctx.fillStyle = '#FF8800';
-    ctx.fillRect(0, 430, 512, 82);
-
-    // Platforms (red)
+    ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = '#FF8800'; ctx.fillRect(0, 430, 512, 82);
     ctx.fillStyle = '#FF0000';
-    ctx.fillRect(40,  340, 160, 20);
-    ctx.fillRect(230, 270, 130, 20);
-    ctx.fillRect(390, 200, 100, 20);
-    ctx.fillRect(100, 180, 110, 20);
-
-    // Player (blue)
-    ctx.fillStyle = '#0088FF';
-    ctx.fillRect(70, 305, 20, 35);
-
-    // Enemy (green)
-    ctx.fillStyle = '#00FF00';
-    ctx.fillRect(260, 248, 20, 22);
-
+    ctx.fillRect(40, 340, 160, 20); ctx.fillRect(230, 270, 130, 20);
+    ctx.fillRect(390, 200, 100, 20); ctx.fillRect(100, 180, 110, 20);
+    ctx.fillStyle = '#0088FF'; ctx.fillRect(70, 305, 20, 35);
+    ctx.fillStyle = '#00FF00'; ctx.fillRect(260, 248, 20, 22);
     return c.toDataURL('image/png');
 }
 
 async function testImageGen() {
     const btn = document.getElementById('btn-test-gen');
-    btn.textContent = 'Generating...';
-    btn.disabled = true;
+    btn.textContent = 'Generating...'; btn.disabled = true;
 
-    const wiremesh = _makeStaticWiremesh();
-    const emotion  = 'ANGRY';
-    const p        = PROMPTS[emotion];
-
-    console.log('[test-gen] Sending static wiremesh to Replicate for ANGRY...');
+    const emotion = 'ANGRY';
+    const p       = PROMPTS[emotion];
+    console.log('[test-gen] Sending SDXL request for ANGRY...');
     setGenDot(true);
 
     try {
         const resp = await fetch(`${SERVER_URL}/generate`, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 version: REPLICATE_MODEL_VERSION,
                 input: {
-                    image:            wiremesh,
-                    prompt:           p.pos + ', best quality, extremely detailed',
-                    a_prompt:         'best quality, game art, vivid, detailed',
-                    n_prompt:         p.neg,
-                    num_samples:      '1',
-                    image_resolution: '512',
-                    ddim_steps:       20,
-                    scale:            9.0,
-                    seed:             -1,
+                    prompt:              p.pos,
+                    negative_prompt:     p.neg,
+                    width:               512,
+                    height:              512,
+                    num_inference_steps: 20,
+                    guidance_scale:      7.5,
+                    scheduler:           'K_EULER',
                 },
             }),
         });
-
         const data = await resp.json();
         if (data.image_data_url) {
-            console.log(`[test-gen] SUCCESS (${Math.round(data.image_data_url.length / 1024)}KB) — force-applying to background`);
-            // Force-apply regardless of current emotion state
-            const img = new Image();
-            img.onload = () => {
-                console.log(`[test-gen] Image decoded: ${img.naturalWidth}x${img.naturalHeight}px`);
-                game._applyImage(img);
-            };
-            img.onerror = () => console.error('[test-gen] Image failed to decode');
-            img.src = data.image_data_url;
+            console.log(`[test-gen] SUCCESS (${Math.round(data.image_data_url.length/1024)}KB) — applying`);
+            const img   = new Image();
+            img.onload  = () => { console.log(`[test-gen] ${img.naturalWidth}x${img.naturalHeight}px`); game._applyImage(img); };
+            img.onerror = () => console.error('[test-gen] Image decode failed');
+            img.src     = data.image_data_url;
         } else {
             console.error('[test-gen] FAILED:', data.error ?? data);
         }
     } catch (e) {
         console.error('[test-gen] Request error:', e.message);
     } finally {
-        setGenDot(false);
-        btn.textContent = 'Test Image Gen';
-        btn.disabled = false;
+        setGenDot(false); btn.textContent = 'Test Image Gen'; btn.disabled = false;
     }
 }
 
 
 // ════════════════════════════════════════════════════════════
-// FADE TEST  — generates two dummy images locally, no API needed
+// FADE TEST  — local only, no API
 // ════════════════════════════════════════════════════════════
 
-function _makeDummyImage(label, bgColor, textColor = '#fff') {
+function _makeDummyImage(label, bgColor) {
     const c = document.createElement('canvas');
-    c.width = 800; c.height = 400;
+    c.width = c.height = 512;
     const ctx = c.getContext('2d');
-
-    // Background fill
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, 800, 400);
-
-    // Gradient overlay for visual interest
-    const grad = ctx.createLinearGradient(0, 0, 800, 400);
-    grad.addColorStop(0, 'rgba(0,0,0,0.4)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 800, 400);
-
-    // Label
-    ctx.fillStyle = textColor;
-    ctx.font = 'bold 48px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(label, 400, 210);
-    ctx.font = '20px monospace';
-    ctx.fillText('FADE TEST — bg rendering OK', 400, 260);
-
+    ctx.fillStyle = bgColor; ctx.fillRect(0, 0, 512, 512);
+    const g = ctx.createLinearGradient(0, 0, 512, 512);
+    g.addColorStop(0, 'rgba(0,0,0,0.4)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 42px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(label, 256, 240);
+    ctx.font = '18px monospace'; ctx.fillText('FADE TEST — rendering OK', 256, 285);
     return c.toDataURL('image/png');
 }
 
 function testFade() {
-    const img1 = _makeDummyImage('IMAGE 1 — ORANGE', '#b84a00');
-    const img2 = _makeDummyImage('IMAGE 2 — TEAL',   '#006b5e');
-
     console.log('[test] Fading in image 1...');
-    game._onImageReady(img1, 'NEUTRAL');
-
+    const img1 = new Image();
+    img1.onload = () => game._applyImage(img1);
+    img1.src = _makeDummyImage('IMAGE 1 — ORANGE', '#b84a00');
     setTimeout(() => {
         console.log('[test] Fading in image 2...');
-        game._onImageReady(img2, 'HAPPY');
+        const img2 = new Image();
+        img2.onload = () => game._applyImage(img2);
+        img2.src = _makeDummyImage('IMAGE 2 — TEAL', '#006b5e');
     }, 4000);
 }
 
@@ -947,6 +816,5 @@ function testFade() {
 const game = new OpenWorldEngine('gameCanvas');
 game.start();
 </script>
-
 </body>
 </html>
