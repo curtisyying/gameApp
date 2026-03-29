@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pip install python-dotenv)",
+      "WebFetch(domain:www.aimodels.fyi)",
+      "WebFetch(domain:www.toolify.ai)",
+      "WebSearch",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

@@ -47,7 +47,7 @@
 
         /* ── Below-canvas UI ── */
         #debugUI  { width: 512px; display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
-        .raw-data { color: #ff5555; } .visual-data { color: #55ff55; }
+        .raw-data { color: #ff5555; } .visual-data { color: #55ff55; } .stress-data { color: #ffaa00; }
         .controls { width: 512px; text-align: center; color: #888; font-size: 12px; margin-top: 4px; }
         #buttons  { display: flex; gap: 8px; margin-top: 8px; }
         button {
@@ -72,6 +72,7 @@
 <div id="debugUI">
     <span class="raw-data"  id="rawLabel">Raw Sensor: 0%</span>
     <span class="visual-data" id="visualLabel">Screen Lerp: 0%</span>
+    <span class="stress-data" id="stressLabel" style="color: #ffaa00; margin-left: 20px;">Stress: 0.00</span>
 </div>
 <div class="controls">ARROWS: Move/Jump/Swim &nbsp;|&nbsp; Z: Dash &nbsp;|&nbsp; X: Sword Slice</div>
 <div id="buttons">
@@ -698,6 +699,7 @@ class OpenWorldEngine {
 
         document.getElementById('rawLabel').innerText    = `Raw Sensor: ${Math.round(this.targetStress * 100)}%`;
         document.getElementById('visualLabel').innerText = `Screen Lerp: ${Math.round(s * 100)}%`;
+        document.getElementById('stressLabel').innerText = `Stress: ${s.toFixed(2)} (target: ${this.targetStress.toFixed(2)})`;
 
         // Trigger regeneration when emotion changes
         if (this.currentEmotion !== newEmotion) {
@@ -1062,6 +1064,9 @@ class OpenWorldEngine {
 
     // Called every frame — queues generation for tiles near the current view.
     updateTileGen() {
+        // AI generation disabled for debugging
+        return;
+        
         const leftTile = Math.floor(this.cameraX / this.tileWidth);
         // Priority order: current view first, then lookahead, then behind
         for (const i of [leftTile, leftTile + 1, leftTile + 2, leftTile - 1]) {
