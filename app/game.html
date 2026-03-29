@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Emotion Platformer</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; color: white; font-family: monospace; }
+
+        #game-wrapper { position: relative; width: 512px; height: 512px; }
+
+        canvas {
+            display: block;
+            width: 512px; height: 512px;
+            border: 10px solid #333; border-radius: 5px;
+            box-shadow: 0px 10px 30px rgba(0,0,0,0.8);
+        }
+
+        /* ── UI overlay (non-interactive) ── */
+        #ui-overlay {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+        }
+        #emotion-badge {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.65); color: #fff;
+            padding: 5px 12px; border-radius: 4px; font-size: 13px;
+            border-left: 3px solid #888;
+            transition: border-color 0.5s;
+        }
+        #gen-dot {
+            position: absolute; top: 14px; right: 12px;
+            width: 9px; height: 9px; border-radius: 50%;
+            background: transparent; transition: background 0.3s;
+        }
+        #gen-dot.generating { background: #ff8800; animation: dotpulse 0.9s ease-in-out infinite; }
+        #gen-dot.done       { background: #44ff88; }
+        @keyframes dotpulse {
+            0%,100% { transform: scale(1); opacity: 1; }
+            50%     { transform: scale(1.7); opacity: 0.4; }
+        }
+        #stress-track {
+            position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
+            background: rgba(0,0,0,0.3);
+        }
+        #stress-fill { height: 100%; width: 0%; background: #44ff88; transition: width 0.4s, background 0.5s; }
+
+        /* ── Below-canvas UI ── */
+        #debugUI  { width: 512px; display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
+        .raw-data { color: #ff5555; } .visual-data { color: #55ff55; } .stress-data { color: #ffaa00; }
+        .controls { width: 512px; text-align: center; color: #888; font-size: 12px; margin-top: 4px; }
+        #buttons  { display: flex; gap: 8px; margin-top: 8px; }
+        button {
+            background: #222; color: #ccc; border: 1px solid #555;
+            padding: 5px 13px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px;
+        }
+        button:hover { background: #333; color: #fff; }
+        button.active { border-color: #ff8800; color: #ff8800; }
+    </style>
+</head>
+<body>
+    <div id="calibration-ui">
+        <video id="webcam" autoplay playsinline muted style="position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none;"></video>
+        <h2 style="color: #44ff88; letter-spacing: 2px;">SYSTEM CALIBRATION</h2>
+        <p>Please allow camera access. Align your face inside the box to begin.</p>
+        
+        <style>
+            /* Changed height from 240px to 180px to naturally match 16:9 webcams and prevent stretching! */
+            #camera-container { position: relative !important; width: 320px !important; height: 180px !important; display: block !important; margin: 20px auto !important; }
+            #mirror-canvas { position: absolute !important; top: 0 !important; left: 0 !important; width: 320px !important; height: 180px !important; border: none !important; margin: 0 !important; z-index: 1 !important; transform: scaleX(-1) !important; display: block !important; object-fit: cover !important; }
+            #target-box { position: absolute !important; top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; width: 120px !important; height: 140px !important; border: 3px dashed #ff4444; z-index: 10 !important; }
+        </style>
+    
+        <div id="camera-container">
+            <img id="mirror-canvas" src="http://localhost:8765/video_feed" crossorigin="anonymous">
+            <div id="target-box"></div>
+        </div>
+    
+        <button id="start-game-btn" class="start-btn" disabled>Awaiting Face...</button>
+    </div>
+
+<div id="game-wrapper" style="display:none">
+    <canvas id="gameCanvas" width="512" height="512"></canvas>
+    <div id="ui-overlay">
+        <div id="emotion-badge">😐 NEUTRAL</div>
+        <div id="gen-dot"></div>
+        <div id="stress-track"><div id="stress-fill"></div></div>
+    </div>
+</div>
+
+<div id="debugUI" style="display:none">
+    <span class="raw-data"  id="rawLabel">Raw Sensor: 0%</span>
+    <span class="visual-data" id="visualLabel">Screen Lerp: 0%</span>
+    <span class="stress-data" id="stressLabel" style="color: #ffaa00; margin-left: 20px;">Stress: 0.00</span>
+</div>
+<div class="controls" style="display:none">ARROWS: Move/Jump/Swim &nbsp;|&nbsp; Z: Dash &nbsp;|&nbsp; X: Sword Slice</div>
+<div id="buttons" style="display:none">
+    <button id="btn-demo"     onclick="toggleDemo()">Demo Mode</button>
+    <button onclick="game.forceRegen()">Regenerate Now</button>
+    <button onclick="testFade()">Test Fade</button>
+    <button id="btn-test-gen" onclick="testImageGen()">Test Image Gen</button>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════════
+
+const SERVER_URL = 'http://localhost:8765';
+
+// Stability AI SDXL — pure text-to-image, no ControlNet needed
+// https://replicate.com/stability-ai/sdxl
+const REPLICATE_MODEL_VERSION = '7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc';
+
+const PROMPTS = {
+    HAPPY: {
+        pos: 'sunny spring meadow 2d platformer game, bright blue sky with white clouds, vibrant green grass field, colorful wildflowers blooming everywhere, butterflies, cheerful sunny day, warm golden sunlight, lush nature, peaceful happy atmosphere, side view, game background art',
+        neg: 'dark, gloomy, winter, ice, snow, dead, withered, volcanic, lava, fire, blurry, ugly, text, watermark',
+    },
+    NEUTRAL: {
+        pos: 'desolate moon surface 2d platformer game, dark starry space sky, barren gray lunar landscape, rocky craters, monochrome grey terrain, lifeless alien world, sterile metallic platforms, boring homogeneous atmosphere, side view, game background art',
+        neg: 'colorful, vibrant, lush, green, blue, red, fire, ice, flowers, trees, blurry, ugly, text, watermark',
+    },
+    SAD: {
+        pos: 'brutal frozen wasteland 2d platformer game, dark grey overcast sky, heavy blizzard, jagged ice spikes jutting from ground, sharp icicles, harsh snow texture, frozen tundra with dangerous ice formations, icy blue glaciers, dead frozen trees, desolate cold landscape, treacherous winter atmosphere, side view, game background art',
+        neg: 'bright, sunny, warm, colorful, flowers, spring, summer, fire, lava, soft, gentle, blurry, ugly, text, watermark',
+    },
+    ANGRY: {
+        pos: 'volcanic hellscape 2d platformer game, blood red sky, ash clouds, lava cracks, obsidian walls, fire demons, chaotic dark, side view, game background art',
+        neg: 'peaceful, pastel, cute, calm, blurry, ugly, text, watermark',
+    },
+};
+
+// Tile generation — each tile is generated wider than the viewport so adjacent
+// tiles physically overlap, enabling a real pixel cross-fade at seams.
+const TILE_OVERLAP = 64;               // extra pixels generated on each side
+const TILE_GEN_W   = 512 + 2 * TILE_OVERLAP; // = 640, width sent to SDXL
+const TILE_BLEND_W = 2 * TILE_OVERLAP; // = 128, blend zone at each seam
+
+const UI_COLORS = { HAPPY: '#ffdd44', NEUTRAL: '#44ff88', SAD: '#4499ff', ANGRY: '#ff4422' };
+const UI_LABELS = { HAPPY: '😊 HAPPY', NEUTRAL: '😐 NEUTRAL', SAD: '😢 SAD', ANGRY: '😠 ANGRY' };
+
+// Stress thresholds matching the palette blend points in updateVisuals()
+const STRESS_THRESHOLDS = { HAPPY: 0.22, NEUTRAL: 0.47, SAD: 0.80 };
+
+
+// ════════════════════════════════════════════════════════════
+// IMAGE GENERATOR  — one in-flight request at a time, tile-indexed queue
+// ════════════════════════════════════════════════════════════
+
+class ImageGenerator {
+    constructor() {
+        this.busy       = false;
+        this.queue      = []; // [{ tileIndex, wiremeshDataUrl, emotion }]
+        this.onTileReady = null; // (tileIndex, dataUrl) => void
+    }
+
+    enqueueTile(tileIndex, wiremeshDataUrl, emotion, slot = 'a') {
+        // Skip if already queued for this tile+slot
+        if (this.queue.some(q => q.tileIndex === tileIndex && q.slot === slot)) return;
+        this.queue.push({ tileIndex, wiremeshDataUrl, emotion, slot });
+        this._process();
+    }
+
+    async _process() {
+        if (this.busy || this.queue.length === 0) return;
+
+        const { tileIndex, wiremeshDataUrl, emotion, slot } = this.queue.shift();
+        this.busy = true;
+
+        const p = PROMPTS[emotion] ?? PROMPTS.NEUTRAL;
+        setGenDot(true);
+        console.log(`[gen] Tile ${tileIndex} — SDXL request (${emotion})...`);
+
+        try {
+            const resp = await fetch(`${SERVER_URL}/generate`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    version: REPLICATE_MODEL_VERSION,
+                    input: {
+                        image:               wiremeshDataUrl,
+                        prompt_strength:     0.75,
+                        prompt:              p.pos,
+                        negative_prompt:     p.neg,
+                        width:               TILE_GEN_W,
+                        height:              512,
+                        num_inference_steps: 20,
+                        guidance_scale:      7.5,
+                        scheduler:           'K_EULER',
+                    },
+                }),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                console.warn(`[gen] Tile ${tileIndex} server error:`, err.error ?? resp.status);
+                return;
+            }
+            const data = await resp.json();
+            if (data.image_data_url && this.onTileReady) {
+                this.onTileReady(tileIndex, slot, data.image_data_url);
+            } else if (data.error) {
+                console.warn(`[gen] Tile ${tileIndex} generation error:`, data.error);
+            }
+        } catch (e) {
+            console.warn(`[gen] Tile ${tileIndex} request failed:`, e.message);
+        } finally {
+            this.busy = false;
+            setGenDot(false);
+            if (this.queue.length > 0) setTimeout(() => this._process(), 200);
+        }
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// WIREMESH RENDERER  — kept for testImageGen, not used in main pipeline
+// ════════════════════════════════════════════════════════════
+
+class WiremeshRenderer {
+    constructor() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width  = TILE_GEN_W; // 640 — wider than viewport for overlap blending
+        this.canvas.height = 512;
+        this.ctx = this.canvas.getContext('2d');
+    }
+
+    render(entities, player, cameraX, groundY, gameW, gameH, emotion = 'ANGRY') {
+        const ctx = this.ctx;
+        const CW = this.canvas.width, CH = this.canvas.height;
+        const sx = CW / gameW, sy = CH / gameH;
+        const groundScreenY = groundY * sy;
+
+        // ── Emotion-based background gradients ──
+        if (emotion === 'HAPPY') {
+            // Bright sunny sky
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, groundScreenY);
+            skyGrad.addColorStop(0,   '#87CEEB');  // sky blue
+            skyGrad.addColorStop(0.5, '#B0E0E6');  // powder blue
+            skyGrad.addColorStop(1,   '#E0F6FF');  // light cyan
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, CW, groundScreenY);
+
+            // Bright green grass
+            const grassGrad = ctx.createLinearGradient(0, groundScreenY, 0, CH);
+            grassGrad.addColorStop(0,   '#90EE90');  // light green
+            grassGrad.addColorStop(0.5, '#7CFC00');  // lawn green
+            grassGrad.addColorStop(1,   '#32CD32');  // lime green
+            ctx.fillStyle = grassGrad;
+            ctx.fillRect(0, groundScreenY, CW, CH - groundScreenY);
+
+            // Sunny glow spots
+            const glowY = groundScreenY - 50;
+            for (const [gx, gr] of [[100,80],[300,100],[500,90]]) {
+                const g = ctx.createRadialGradient(gx, glowY, 0, gx, glowY, gr);
+                g.addColorStop(0,   'rgba(255,255,200,0.4)');
+                g.addColorStop(0.5, 'rgba(255,255,150,0.2)');
+                g.addColorStop(1,   'rgba(255,255,100,0)');
+                ctx.fillStyle = g;
+                ctx.fillRect(0, 0, CW, CH);
+            }
+        } else if (emotion === 'NEUTRAL') {
+            // Boring gray space/moon
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, groundScreenY);
+            skyGrad.addColorStop(0,   '#0A0A0A');  // very dark gray (space)
+            skyGrad.addColorStop(0.5, '#1A1A1A');  // dark gray
+            skyGrad.addColorStop(1,   '#2A2A2A');  // medium dark gray
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, CW, groundScreenY);
+
+            // Gray lunar surface
+            const lunarGrad = ctx.createLinearGradient(0, groundScreenY, 0, CH);
+            lunarGrad.addColorStop(0,   '#6A6A6A');  // medium gray
+            lunarGrad.addColorStop(0.5, '#5A5A5A');  // darker gray
+            lunarGrad.addColorStop(1,   '#4A4A4A');  // dark gray
+            ctx.fillStyle = lunarGrad;
+            ctx.fillRect(0, groundScreenY, CW, CH - groundScreenY);
+
+            // Subtle stars in space
+            ctx.fillStyle = '#FFFFFF';
+            for (let i = 0; i < 30; i++) {
+                const sx = Math.random() * CW;
+                const sy = Math.random() * groundScreenY;
+                ctx.fillRect(sx, sy, 1, 1);
+            }
+        } else if (emotion === 'SAD') {
+            // Cold grey/blue sky
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, groundScreenY);
+            skyGrad.addColorStop(0,   '#2F4F4F');  // dark slate grey
+            skyGrad.addColorStop(0.5, '#4682B4');  // steel blue
+            skyGrad.addColorStop(1,   '#5F9EA0');  // cadet blue
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, CW, groundScreenY);
+
+            // Icy blue ground
+            const iceGrad = ctx.createLinearGradient(0, groundScreenY, 0, CH);
+            iceGrad.addColorStop(0,   '#B0E0E6');  // powder blue
+            iceGrad.addColorStop(0.5, '#87CEEB');  // sky blue
+            iceGrad.addColorStop(1,   '#4682B4');  // steel blue
+            ctx.fillStyle = iceGrad;
+            ctx.fillRect(0, groundScreenY, CW, CH - groundScreenY);
+
+            // Cold mist
+            const mistY = groundScreenY + 10;
+            for (const [gx, gr] of [[150,100],[350,120],[550,90]]) {
+                const g = ctx.createRadialGradient(gx, mistY, 0, gx, mistY, gr);
+                g.addColorStop(0,   'rgba(200,220,255,0.3)');
+                g.addColorStop(0.5, 'rgba(180,200,230,0.2)');
+                g.addColorStop(1,   'rgba(160,180,210,0)');
+                ctx.fillStyle = g;
+                ctx.fillRect(0, 0, CW, CH);
+            }
+        } else {
+            // ANGRY - Rich lava background
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, groundScreenY);
+            skyGrad.addColorStop(0,   '#080000');
+            skyGrad.addColorStop(0.5, '#1c0000');
+            skyGrad.addColorStop(1,   '#3d0a00');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, CW, groundScreenY);
+
+            const lavaGrad = ctx.createLinearGradient(0, groundScreenY, 0, CH);
+            lavaGrad.addColorStop(0,   '#ff5500');
+            lavaGrad.addColorStop(0.3, '#cc2200');
+            lavaGrad.addColorStop(1,   '#5a0000');
+            ctx.fillStyle = lavaGrad;
+            ctx.fillRect(0, groundScreenY, CW, CH - groundScreenY);
+
+            const glowY = groundScreenY + 10;
+            for (const [gx, gr] of [[80,90],[200,120],[380,110],[520,90],[150,60],[470,70]]) {
+                const g = ctx.createRadialGradient(gx, glowY, 0, gx, glowY, gr);
+                g.addColorStop(0,   'rgba(255,180,0,0.55)');
+                g.addColorStop(0.4, 'rgba(255,60,0,0.3)');
+                g.addColorStop(1,   'rgba(200,0,0,0)');
+                ctx.fillStyle = g;
+                ctx.fillRect(0, 0, CW, CH);
+            }
+
+            const hazeGrad = ctx.createRadialGradient(CW/2, 0, 0, CW/2, 0, 400);
+            hazeGrad.addColorStop(0,   'rgba(120,10,0,0.25)');
+            hazeGrad.addColorStop(1,   'rgba(0,0,0,0)');
+            ctx.fillStyle = hazeGrad;
+            ctx.fillRect(0, 0, CW, CH);
+        }
+
+        // ── Platforms & ground — bright so SDXL reads shape clearly ──
+        for (const e of entities) {
+            const ex = (e.x - cameraX) * sx, ey = e.y * sy;
+            const ew = e.width * sx,           eh = e.height * sy;
+            if (ex + ew < 0 || ex > TILE_GEN_W) continue;
+            if (e.type === 'ground') {
+                if (emotion === 'HAPPY') {
+                    ctx.fillStyle = '#228B22';  // forest green
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#90EE90';  // light green top
+                    ctx.fillRect(ex, ey, ew, 3);
+                } else if (emotion === 'NEUTRAL') {
+                    ctx.fillStyle = '#5A5A5A';  // medium gray
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#7A7A7A';  // lighter gray top
+                    ctx.fillRect(ex, ey, ew, 3);
+                } else if (emotion === 'SAD') {
+                    ctx.fillStyle = '#4682B4';  // steel blue
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#B0E0E6';  // powder blue top
+                    ctx.fillRect(ex, ey, ew, 3);
+                } else {
+                    ctx.fillStyle = '#dd4400';  // lava orange
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#ff9933';  // bright orange top
+                    ctx.fillRect(ex, ey, ew, 3);
+                }
+            } else if (e.type === 'platform') {
+                if (emotion === 'HAPPY') {
+                    ctx.fillStyle = '#E0F6FF';  // very light blue/white
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#FFD700';  // gold/yellow outline top
+                    ctx.fillRect(ex, ey, ew, 3);
+                    ctx.fillStyle = '#87CEEB';  // light blue accent
+                    ctx.fillRect(ex, ey + eh - 2, ew, 2);
+                } else if (emotion === 'NEUTRAL') {
+                    ctx.fillStyle = '#4A4A4A';  // dark gray
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#6A6A6A';  // medium gray top
+                    ctx.fillRect(ex, ey, ew, 2);
+                    ctx.fillStyle = '#3A3A3A';  // darker gray bottom accent
+                    ctx.fillRect(ex, ey + eh - 1, ew, 1);
+                } else if (emotion === 'SAD') {
+                    ctx.fillStyle = '#1C3A5C';  // dark blue
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#2F4F6F';  // slightly lighter dark blue top
+                    ctx.fillRect(ex, ey, ew, 2);
+                } else {
+                    ctx.fillStyle = '#ffcc44';  // yellow-orange
+                    ctx.fillRect(ex, ey, ew, eh);
+                    ctx.fillStyle = '#ffffff';  // white top
+                    ctx.fillRect(ex, ey, ew, 2);
+                }
+            }
+        }
+
+        // Player — contrasting color based on emotion
+        if (emotion === 'HAPPY') {
+            ctx.fillStyle = '#FF1493';  // deep pink for contrast against green
+        } else if (emotion === 'NEUTRAL') {
+            ctx.fillStyle = '#00FF00';  // bright green for contrast against gray
+        } else if (emotion === 'SAD') {
+            ctx.fillStyle = '#FF6347';  // tomato red for contrast against blue
+        } else {
+            ctx.fillStyle = '#00aaff';  // bright blue for contrast against red
+        }
+        ctx.fillRect((player.x - cameraX) * sx, player.y * sy, player.width * sx, player.height * sy);
+
+        return this.canvas.toDataURL('image/png');
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// TILE MANAGER  — caches AI-generated 512px world tiles by tile index
+// ════════════════════════════════════════════════════════════
+
+class TileManager {
+    constructor() {
+        this.tiles   = new Map(); // tileIndex → { a: Image|null, b: Image|null, pendingB: bool }
+        this.pending = new Set(); // tileIndex where slot A is in flight
+    }
+
+    has(i)         { return this.tiles.has(i) && !!this.tiles.get(i).a; }
+    hasB(i)        { return this.tiles.has(i) && !!this.tiles.get(i).b; }
+    isPending(i)   { return this.pending.has(i); }
+    isPendingB(i)  { return this.tiles.has(i) && this.tiles.get(i).pendingB; }
+
+    getImages(i)   {
+        const t = this.tiles.get(i);
+        return t ? { a: t.a, b: t.b } : { a: null, b: null };
+    }
+
+    markPending(i)  { this.pending.add(i); }
+    markPendingB(i) { if (this.tiles.has(i)) this.tiles.get(i).pendingB = true; }
+
+    cancelPending(i)  { this.pending.delete(i); }
+    cancelPendingB(i) { if (this.tiles.has(i)) this.tiles.get(i).pendingB = false; }
+
+    store(i, img, slot, currentLeftTile) {
+        if (!this.tiles.has(i)) this.tiles.set(i, { a: null, b: null, pendingB: false });
+        const t = this.tiles.get(i);
+        if (slot === 'a') { t.a = img; this.pending.delete(i); }
+        else              { t.b = img; t.pendingB = false; }
+        // Evict tiles far from current view
+        for (const k of this.tiles.keys()) {
+            if (k < currentLeftTile - 3 || k > currentLeftTile + 6) this.tiles.delete(k);
+        }
+    }
+
+    clearAll() { this.tiles.clear(); this.pending.clear(); }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// PIXEL DISSOLVE  — noise-threshold dissolve between two images (Oasis-style)
+// ════════════════════════════════════════════════════════════
+
+class PixelDissolve {
+    constructor() {
+        // Low-res noise (64×64) bilinearly upsampled to 512×512.
+        // Creates large organic blobs rather than per-pixel static.
+        const LR = 64;
+        const lr = new Float32Array(LR * LR);
+        for (let i = 0; i < lr.length; i++) lr[i] = Math.random();
+
+        this.noise = new Float32Array(TILE_GEN_W * 512);
+        for (let y = 0; y < 512; y++) {
+            for (let x = 0; x < TILE_GEN_W; x++) {
+                const fx = (x / TILE_GEN_W) * LR, fy = (y / 512) * LR;
+                const x0 = Math.floor(fx) % LR, y0 = Math.floor(fy) % LR;
+                const x1 = (x0 + 1) % LR,        y1 = (y0 + 1) % LR;
+                const tx = fx - Math.floor(fx),    ty = fy - Math.floor(fy);
+                this.noise[y * TILE_GEN_W + x] =
+                    lr[y0*LR+x0]*(1-tx)*(1-ty) + lr[y0*LR+x1]*tx*(1-ty) +
+                    lr[y1*LR+x0]*(1-tx)*ty     + lr[y1*LR+x1]*tx*ty;
+            }
+        }
+
+        // Scratch: read image pixels into CPU memory
+        this.scratch       = document.createElement('canvas');
+        this.scratch.width  = TILE_GEN_W;
+        this.scratch.height = 512;
+        this.scratchCtx    = this.scratch.getContext('2d', { willReadFrequently: true });
+
+        // gradCanvas: shared temp surface for edge-fade blending
+        this.gradCanvas        = document.createElement('canvas');
+        this.gradCanvas.width  = TILE_GEN_W;
+        this.gradCanvas.height = 512;
+        this.gradCtx           = this.gradCanvas.getContext('2d');
+
+        this.tiles = new Map(); // tileIndex → per-tile dissolve state
+        this.frame = 0;
+    }
+
+    _state(tileIndex) {
+        if (!this.tiles.has(tileIndex)) {
+            const c   = document.createElement('canvas');
+            c.width   = TILE_GEN_W;
+            c.height  = 512;
+            const ctx = c.getContext('2d');
+            this.tiles.set(tileIndex, {
+                imgA: null, imgB: null,
+                pxA:  null, pxB:  null,
+                out:  ctx.createImageData(TILE_GEN_W, 512),
+                outCanvas: c, outCtx: ctx,
+                lastT: -1,
+            });
+        }
+        return this.tiles.get(tileIndex);
+    }
+
+    // Returns the best available canvas for this tile: dissolve result if ready, else raw imgA.
+    getCanvas(tileIndex) {
+        const s = this.tiles.get(tileIndex);
+        if (!s) return null;
+        return s.lastT >= 0 ? s.outCanvas : s.imgA;
+    }
+
+    _readPixels(img) {
+        this.scratchCtx.clearRect(0, 0, TILE_GEN_W, 512);
+        this.scratchCtx.drawImage(img, 0, 0, TILE_GEN_W, 512);
+        return this.scratchCtx.getImageData(0, 0, TILE_GEN_W, 512).data;
+    }
+
+    _compute(s, t) {
+        if (!s.pxB) {
+            // B not ready yet — just show A
+            s.outCtx.clearRect(0, 0, TILE_GEN_W, 512);
+            s.outCtx.drawImage(s.imgA, 0, 0, TILE_GEN_W, 512);
+            s.lastT = t;
+            return;
+        }
+        const SOFT = 0.12; // soft blend zone width — removes jagged edges
+        const pOut = s.out.data, pA = s.pxA, pB = s.pxB, noise = this.noise;
+        for (let i = 0; i < TILE_GEN_W * 512; i++) {
+            const j     = i << 2;
+            const blend = Math.max(0, Math.min(1, (noise[i] - (t - SOFT)) / (SOFT * 2)));
+            const inv   = 1 - blend;
+            pOut[j]   = (pA[j]   * inv + pB[j]   * blend) | 0;
+            pOut[j+1] = (pA[j+1] * inv + pB[j+1] * blend) | 0;
+            pOut[j+2] = (pA[j+2] * inv + pB[j+2] * blend) | 0;
+            pOut[j+3] = 255;
+        }
+        s.outCtx.putImageData(s.out, 0, 0);
+        s.lastT = t;
+    }
+
+    // Draw a tile with optional left/right edge gradient fade.
+    // fadeLeft/fadeRight = pixel width of the fade zone on that edge.
+    // Caller shifts screenX left by TILE_OVERLAP so adjacent tiles physically overlap.
+    draw(ctx, tileIndex, imgA, screenX, H, fadeLeft = 0, fadeRight = 0) {
+        if (fadeLeft > 0 || fadeRight > 0) {
+            const gc = this.gradCtx;
+            gc.clearRect(0, 0, TILE_GEN_W, 512);
+            gc.drawImage(imgA, 0, 0, TILE_GEN_W, 512);
+            gc.globalCompositeOperation = 'destination-in';
+            if (fadeLeft > 0) {
+                const g = gc.createLinearGradient(0, 0, fadeLeft, 0);
+                g.addColorStop(0, 'rgba(0,0,0,0)');
+                g.addColorStop(1, 'rgba(0,0,0,1)');
+                gc.fillStyle = g; gc.fillRect(0, 0, TILE_GEN_W, 512);
+            }
+            if (fadeRight > 0) {
+                const g = gc.createLinearGradient(TILE_GEN_W - fadeRight, 0, TILE_GEN_W, 0);
+                g.addColorStop(0, 'rgba(0,0,0,1)');
+                g.addColorStop(1, 'rgba(0,0,0,0)');
+                gc.fillStyle = g; gc.fillRect(0, 0, TILE_GEN_W, 512);
+            }
+            gc.globalCompositeOperation = 'source-over';
+            ctx.drawImage(this.gradCanvas, screenX, 0, TILE_GEN_W, H);
+        } else {
+            ctx.drawImage(imgA, screenX, 0, TILE_GEN_W, H);
+        }
+    }
+
+    evict(tileIndex) { this.tiles.delete(tileIndex); }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// UI HELPERS
+// ════════════════════════════════════════════════════════════
+
+function setGenDot(on) {
+    const el = document.getElementById('gen-dot');
+    el.className = on ? 'generating' : 'done';
+    if (!on) setTimeout(() => { if (el.className === 'done') el.className = ''; }, 2500);
+}
+
+function updateEmotionUI(emotion, stress) {
+    const badge = document.getElementById('emotion-badge');
+    const fill  = document.getElementById('stress-fill');
+    const color = UI_COLORS[emotion] ?? '#888';
+    badge.textContent       = UI_LABELS[emotion] ?? emotion;
+    badge.style.borderColor = color;
+    fill.style.width        = `${Math.round(stress * 100)}%`;
+    fill.style.background   = color;
+}
+
+
+// ════════════════════════════════════════════════════════════
+// GAME ENGINE  (from main — game logic untouched)
+// + AI background layer integrated
+// ════════════════════════════════════════════════════════════
+
+class OpenWorldEngine {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx    = this.canvas.getContext('2d');
+
+        this.keys = { right: false, left: false, up: false, dash: false, attack: false };
+        this.cameraX    = 0;
+        this.baseGroundY = 420;
+
+        this.chunkSize    = 1200;
+        this.worldMap     = new Map();
+        this.activeEntities = [];
+
+        this.player = {
+            x: 256, y: 200, width: 24, height: 36,
+            vx: 0, vy: 0,
+            speed: 5.0, jump: -9.0, grounded: false, facing: 1,
+            acceleration: 0.4,
+            deceleration: 0.22,
+            isDashing: false, dashTimer: 0, dashSpeed: 4.0,
+            dashCooldown: 0, hasAirDashed: false,
+            isAttacking: false, attackTimer: 0,
+            animState: 'standing',
+            animFrame: 0,
+            animTimer: 0,
+        };
+
+        this.palettes = {
+            HAPPY:   { bg: [135,206,235], ground: [34, 139,34],  platform: [224,246,255], enemy: [255,105,180], player: [255,255,255], water: [0,191,255],   attack: [255,255,255] },
+            NEUTRAL: { bg: [26, 26, 26],  ground: [90, 90, 90],  platform: [74, 74, 74],  enemy: [220,20, 60],  player: [0,  255, 0],  water: [70, 70, 70],  attack: [150,150,150] },
+            SAD:     { bg: [47, 79, 79],  ground: [70, 130,180], platform: [28, 58, 92],  enemy: [75, 0,  130], player: [173,216,230], water: [70, 130,180], attack: [100,100,150] },
+            ANGRY:   { bg: [40, 0,  0],   ground: [70, 0,  0],   platform: [139,0,  0],   enemy: [255,140,0],   player: [255,0,  0],   water: [255,69, 0],   attack: [255,255,0]  },
+        };
+
+        this.currentTheme    = this.palettes.NEUTRAL; // will be set properly on first updateVisuals()
+        this.targetStress    = 0;
+        this.visualStress    = 0;
+        this.smoothingFactor = 0.015;
+
+        // ── AI background tile layer ──
+        this.currentEmotion = 'NEUTRAL';
+        this.tileWidth      = 512; // matches canvas and generation size
+
+        this.wiremesh    = new WiremeshRenderer();
+        this.tileManager = new TileManager();
+        this.dissolve    = new PixelDissolve();
+        this.imageGen    = new ImageGenerator();
+        this.imageGen.onTileReady = (tileIndex, slot, dataUrl) => this._onTileReady(tileIndex, slot, dataUrl);
+
+        // ── Sprite system ──
+        this.sprites = {
+            standing: new Image(),
+            left: new Image(),
+            right: new Image()
+        };
+        this.sprites.standing.src = 'sprites/explorer/standing.png';
+        this.sprites.left.src = 'sprites/explorer/left.png';
+        this.sprites.right.src = 'sprites/explorer/right.png';
+
+        this.spritesLoaded = false;
+        let loadedCount = 0;
+        const checkAllLoaded = () => {
+            loadedCount++;
+            if (loadedCount === 3) {
+                this.spritesLoaded = true;
+                console.log('[sprites] All character sprites loaded');
+            }
+        };
+        this.sprites.standing.onload = checkAllLoaded;
+        this.sprites.left.onload = checkAllLoaded;
+        this.sprites.right.onload = checkAllLoaded;
+
+        this.setupInputs();
+    }
+
+    // ── Stress API (called by SSE stream) ────────────────────
+    setTargetStress(rawPercentage) {
+        this.targetStress = Math.max(0, Math.min(100, rawPercentage)) / 100;
+    }
+
+    // ── Visuals + emotion state detection ────────────────────
+    updateVisuals() {
+        this.visualStress += (this.targetStress - this.visualStress) * this.smoothingFactor;
+        const s = this.visualStress;
+        let t = 0;
+
+        // Emotion-based palette blending
+        let newEmotion;
+        if (s < STRESS_THRESHOLDS.HAPPY) {
+            t = s / STRESS_THRESHOLDS.HAPPY;
+            this.currentTheme = this.blendPalettes(this.palettes.HAPPY, this.palettes.NEUTRAL, t);
+            newEmotion = 'HAPPY';
+        } else if (s < STRESS_THRESHOLDS.NEUTRAL) {
+            t = (s - STRESS_THRESHOLDS.HAPPY) / (STRESS_THRESHOLDS.NEUTRAL - STRESS_THRESHOLDS.HAPPY);
+            this.currentTheme = this.blendPalettes(this.palettes.NEUTRAL, this.palettes.SAD, t);
+            newEmotion = 'NEUTRAL';
+        } else if (s < STRESS_THRESHOLDS.SAD) {
+            t = (s - STRESS_THRESHOLDS.NEUTRAL) / (STRESS_THRESHOLDS.SAD - STRESS_THRESHOLDS.NEUTRAL);
+            this.currentTheme = this.blendPalettes(this.palettes.SAD, this.palettes.ANGRY, t);
+            newEmotion = 'SAD';
+        } else {
+            this.currentTheme = this.blendPalettes(this.palettes.ANGRY, this.palettes.ANGRY, 1);
+            newEmotion = 'ANGRY';
+        }
+
+        document.getElementById('rawLabel').innerText    = `Raw Sensor: ${Math.round(this.targetStress * 100)}%`;
+        document.getElementById('visualLabel').innerText = `Screen Lerp: ${Math.round(s * 100)}%`;
+        document.getElementById('stressLabel').innerText = `Stress: ${s.toFixed(2)} (target: ${this.targetStress.toFixed(2)})`;
+
+        // Trigger regeneration when emotion changes
+        if (this.currentEmotion !== newEmotion) {
+            this.currentEmotion = newEmotion;
+            updateEmotionUI(newEmotion, s);
+            this.tileManager.clearAll();
+            this.imageGen.queue = [];
+        }
+    }
+
+    lerp(a, b, t)    { return Math.round(a + (b - a) * t); }
+    lerpRGB(c1,c2,t) { return `rgb(${this.lerp(c1[0],c2[0],t)},${this.lerp(c1[1],c2[1],t)},${this.lerp(c1[2],c2[2],t)})`; }
+    blendPalettes(p1, p2, t) {
+        return {
+            bg:       this.lerpRGB(p1.bg,       p2.bg,       t),
+            ground:   this.lerpRGB(p1.ground,   p2.ground,   t),
+            platform: this.lerpRGB(p1.platform, p2.platform, t),
+            enemy:    this.lerpRGB(p1.enemy,    p2.enemy,    t),
+            player:   this.lerpRGB(p1.player,   p2.player,   t),
+            water:    this.lerpRGB(p1.water,    p2.water,    t),
+            attack:   this.lerpRGB(p1.attack,   p2.attack,   t),
+        };
+    }
+
+    setupInputs() {
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right  = true;
+            if (e.code === 'ArrowLeft')  this.keys.left   = true;
+            if (e.code === 'ArrowUp')  { e.preventDefault(); this.keys.up = true; }
+            if (e.code === 'Space')    { e.preventDefault(); this.keys.up = true; }
+            if (e.code === 'KeyZ')       this.keys.dash   = true;
+            if (e.code === 'KeyX')       this.keys.attack = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right  = false;
+            if (e.code === 'ArrowLeft')  this.keys.left   = false;
+            if (e.code === 'ArrowUp' || e.code === 'Space') this.keys.up = false;
+            if (e.code === 'KeyZ')       this.keys.dash   = false;
+            if (e.code === 'KeyX')       this.keys.attack = false;
+        });
+    }
+
+    // ── World generation ─────────────────────────────────────
+    generateChunk(chunkIndex) {
+        let chunkData = [];
+        let currentX = chunkIndex * this.chunkSize;
+        let endX     = currentX + this.chunkSize;
+        let lastY    = this.baseGroundY;
+
+        const isOverlapping = (x, y, w, h) => {
+            const buffer = 20;
+            for (let e of chunkData.concat(this.activeEntities)) {
+                if (e.type === 'platform' &&
+                    x < e.x + e.width + buffer && x + w > e.x - buffer &&
+                    y < e.y + e.height + buffer && y + h > e.y - buffer) return true;
+            }
+            return false;
+        };
+
+        while (currentX < endX) {
+            const isWaterPit    = Math.random() < 0.35;
+            const sectionWidth  = isWaterPit ? Math.random()*150+150 : Math.random()*200+200;
+
+            if (!isWaterPit) {
+                chunkData.push({ type: 'ground', x: currentX, y: this.baseGroundY, width: sectionWidth, height: 100 });
+                lastY = this.baseGroundY;
+            }
+
+            let cursorX = currentX + 30;
+            while (cursorX < currentX + sectionWidth - 80) {
+                const pW   = Math.random()*50 + 50;
+                let   minY = Math.max(lastY - 85, this.baseGroundY - 220);
+                let   maxY = Math.min(lastY + 85, this.baseGroundY - 40);
+                if (isWaterPit) maxY = Math.min(maxY, this.baseGroundY - 80);
+                const pH = minY + Math.random() * (maxY - minY);
+
+                if (!isOverlapping(cursorX, pH, pW, 15)) {
+                    chunkData.push({ type: 'platform', x: cursorX, y: pH, width: pW, height: 15 });
+                    lastY = pH;
+                }
+                cursorX += pW + Math.random()*40 + 40;
+            }
+
+            currentX += sectionWidth;
+        }
+        return chunkData;
+    }
+
+    updateChunks() {
+        const ci = Math.floor(this.player.x / this.chunkSize);
+        this.activeEntities = [];
+        for (const idx of [ci-1, ci, ci+1]) {
+            if (!this.worldMap.has(idx)) this.worldMap.set(idx, this.generateChunk(idx));
+            this.activeEntities.push(...this.worldMap.get(idx));
+        }
+    }
+
+    checkIntersection(r1, r2) {
+        return !(r2.x >= r1.x+r1.width || r2.x+r2.width <= r1.x || r2.y >= r1.y+r1.height || r2.y+r2.height <= r1.y);
+    }
+
+    // ── Physics (from main — untouched) ──────────────────────
+    updatePhysics() {
+        // Momentum-based movement with acceleration
+        if (this.keys.right) {
+            this.player.facing = 1;
+            this.player.vx += this.player.acceleration;
+            if (this.player.vx > this.player.speed) this.player.vx = this.player.speed;
+        } else if (this.keys.left) {
+            this.player.facing = -1;
+            this.player.vx -= this.player.acceleration;
+            if (this.player.vx < -this.player.speed) this.player.vx = -this.player.speed;
+        } else {
+            // Deceleration when no input
+            if (this.player.vx > 0) {
+                this.player.vx -= this.player.deceleration;
+                if (this.player.vx < 0) this.player.vx = 0;
+            } else if (this.player.vx < 0) {
+                this.player.vx += this.player.deceleration;
+                if (this.player.vx > 0) this.player.vx = 0;
+            }
+        }
+
+        // Update animation state and frame cycling
+        if (this.player.vx !== 0 && this.player.grounded) {
+            this.player.animState = 'walking';
+            this.player.animTimer++;
+            // Switch frames every 6 ticks for snappier walking animation
+            if (this.player.animTimer >= 6) {
+                this.player.animTimer = 0;
+                this.player.animFrame = (this.player.animFrame + 1) % 2; // Toggle between 0 and 1
+            }
+        } else {
+            this.player.animState = 'standing';
+            this.player.animTimer = 0;
+            this.player.animFrame = 0;
+        }
+
+        if (this.player.dashCooldown > 0) this.player.dashCooldown--;
+
+        if (this.keys.dash && this.player.dashCooldown === 0 && !this.player.isDashing) {
+            if (this.player.grounded || (!this.player.grounded && !this.player.hasAirDashed)) {
+                this.player.isDashing = true; this.player.dashTimer = 18; this.player.dashCooldown = 60;
+                this.player.vy = 0;
+                if (!this.player.grounded) this.player.hasAirDashed = true;
+            }
+        }
+        if (this.player.isDashing) {
+            this.player.vx = this.player.dashSpeed * this.player.facing;
+            if (--this.player.dashTimer <= 0) this.player.isDashing = false;
+        }
+
+        this.player.x += this.player.vx;
+        for (const e of this.activeEntities) {
+            if (e.type === 'ground' && this.checkIntersection(this.player, e)) {
+                this.player.x  = this.player.vx > 0 ? e.x - this.player.width : e.x + e.width;
+                this.player.vx = 0;
+            }
+        }
+
+        if (!this.player.isDashing) this.player.vy += 0.35;
+        if (this.keys.up && this.player.grounded) { this.player.vy = this.player.jump; this.player.grounded = false; }
+
+        this.player.y += this.player.vy;
+        this.player.grounded = false;
+        for (const e of this.activeEntities) {
+            if ((e.type === 'ground' || e.type === 'platform') &&
+                this.player.vy >= 0 &&
+                this.player.x + this.player.width > e.x && this.player.x < e.x + e.width &&
+                this.player.y + this.player.height - this.player.vy <= e.y + 2 &&
+                this.player.y + this.player.height >= e.y) {
+                this.player.grounded = true; this.player.hasAirDashed = false;
+                this.player.vy = 0; this.player.y = e.y - this.player.height;
+            }
+        }
+
+        this.cameraX = this.player.x - this.canvas.width / 2;
+
+        const waterSurface = this.baseGroundY + 20;
+        if (this.player.y > waterSurface) {
+            if (this.visualStress < 0.80) {
+                this.player.vy *= 0.8;
+                if (this.keys.up) this.player.vy = this.player.y < waterSurface+40 ? this.player.jump : -3.5;
+                this.player.hasAirDashed = false;
+            } else {
+                this.player.vy = -10;
+                this.player.hasAirDashed = false;
+            }
+        }
+
+        if (this.keys.attack && this.player.attackTimer <= 0) this.player.attackTimer = 25;
+        if (this.player.attackTimer > 0) this.player.attackTimer--;
+        let attackHitbox = null;
+        if (this.player.attackTimer > 15) {
+            attackHitbox = {
+                x: this.player.facing === 1 ? this.player.x + this.player.width/2 : this.player.x + this.player.width/2 - 45,
+                y: this.player.y - 15, width: 45, height: 50,
+            };
+        }
+        for (const e of this.activeEntities) {
+            if ((e.type === 'enemy_ground' || e.type === 'enemy_flying') && !e.dead) {
+                if (e.type === 'enemy_ground') {
+                    e.x += e.vx;
+                    if (e.x < e.minX || e.x + e.width > e.maxX) e.vx *= -1;
+                } else {
+                    const prevY = e.y;
+                    e.hoverTime += 0.015;
+                    e.y = e.startY + Math.sin(e.hoverTime) * 15;
+                    for (const p of this.activeEntities) {
+                        if ((p.type === 'platform' || p.type === 'ground') && this.checkIntersection(e, p)) {
+                            e.y = prevY;
+                            e.startY += e.y < p.y ? -0.5 : 0.5;
+                            break;
+                        }
+                    }
+                }
+                if      (attackHitbox && this.checkIntersection(attackHitbox, e)) { e.dead = true; this.player.vy = -3; this.player.hasAirDashed = false; }
+                else if (this.checkIntersection(this.player, e))                   { this.player.vy = -4; this.player.vx = -4 * this.player.facing; }
+            }
+        }
+    }
+
+    // ── Draw ─────────────────────────────────────────────────
+    draw() {
+        const ctx = this.ctx;
+        const W = this.canvas.width, H = this.canvas.height;
+
+        // 1. Theme background (always drawn as base)
+        ctx.fillStyle = this.currentTheme.bg;
+        ctx.fillRect(0, 0, W, H);
+
+        // 2. AI tile backgrounds — pixel noise dissolve + overlap seam blend
+        const leftTile     = Math.floor(this.cameraX / this.tileWidth);
+        const leftScreenX  = leftTile * this.tileWidth - this.cameraX;
+        const rightScreenX = (leftTile + 1) * this.tileWidth - this.cameraX;
+        let hasBg = false;
+
+        const { a: lA } = this.tileManager.getImages(leftTile);
+        const { a: rA } = this.tileManager.getImages(leftTile + 1);
+
+        // Each tile is TILE_GEN_W=640px wide (64px extra on each side).
+        // Drawing it shifted left by TILE_OVERLAP creates a 128px physical overlap zone.
+        // The inner-edge fade is only applied when both tiles are present — no jarring
+        // fade flash when only one tile has loaded yet.
+        if (lA) {
+            hasBg = true;
+            this.dissolve.draw(ctx, leftTile,     lA, leftScreenX  - TILE_OVERLAP, H, 0,                      rA ? TILE_BLEND_W : 0);
+        }
+        if (rA) {
+            hasBg = true;
+            this.dissolve.draw(ctx, leftTile + 1, rA, rightScreenX - TILE_OVERLAP, H, lA ? TILE_BLEND_W : 0,  0);
+        }
+
+        // 3. Game world
+        ctx.save();
+        ctx.translate(-this.cameraX, 0);
+
+        // Water / lava
+        ctx.fillStyle = this.currentTheme.water;
+        ctx.globalAlpha = hasBg ? 0.55 : 1;
+        ctx.fillRect(this.cameraX - 100, this.baseGroundY + 20, W + 200, H);
+        ctx.globalAlpha = 1;
+
+        // Platforms & ground
+        for (const e of this.activeEntities) {
+            if (e.type === 'ground' || e.type === 'platform') {
+                if (!hasBg) {
+                    // No AI image yet — fill with palette color
+                    ctx.fillStyle = e.type === 'ground' ? this.currentTheme.ground : this.currentTheme.platform;
+                    ctx.fillRect(e.x, e.y, e.width, e.height);
+                }
+                // Emotion-based outline colors
+                let outlineColor;
+                if (this.currentEmotion === 'HAPPY') {
+                    outlineColor = 'rgba(255, 215, 0, 0.8)';  // gold/yellow for cheerful vibe
+                } else if (this.currentEmotion === 'NEUTRAL') {
+                    outlineColor = 'rgba(100, 100, 100, 0.8)';  // medium gray for sterile/boring vibe
+                } else if (this.currentEmotion === 'SAD') {
+                    outlineColor = 'rgba(70, 130, 180, 0.8)';  // steel blue for cold/icy vibe
+                } else {
+                    outlineColor = 'rgba(0, 0, 0, 0.9)';  // black for dark hellscape vibe
+                }
+                ctx.strokeStyle = outlineColor;
+                ctx.lineWidth   = 2;
+                ctx.strokeRect(e.x, e.y, e.width, e.height);
+            }
+        }
+
+        // Player - sprite-based rendering with walking animation
+        if (this.spritesLoaded) {
+            let currentSprite;
+            if (this.player.animState === 'standing') {
+                currentSprite = this.sprites.standing;
+            } else {
+                // Walking: alternate between left and right foot sprites
+                currentSprite = this.player.animFrame === 0 ? this.sprites.left : this.sprites.right;
+            }
+            
+            // Apply dash flash effect
+            if (this.player.dashCooldown > 0 && Math.floor(Date.now()/100)%2===0) {
+                ctx.globalAlpha = 0.5;
+            }
+            
+            ctx.save();
+            
+            // Flip horizontally when facing left
+            if (this.player.facing === -1) {
+                ctx.translate(this.player.x + this.player.width, this.player.y);
+                ctx.scale(-1, 1);
+                ctx.drawImage(currentSprite, 0, 0, this.player.width, this.player.height);
+            } else {
+                ctx.drawImage(
+                    currentSprite,
+                    this.player.x,
+                    this.player.y,
+                    this.player.width,
+                    this.player.height
+                );
+            }
+            
+            ctx.restore();
+            ctx.globalAlpha = 1;
+        } else {
+            // Fallback to colored box while sprites load
+            ctx.fillStyle = (this.player.dashCooldown > 0 && Math.floor(Date.now()/100)%2===0)
+                ? 'rgba(255,255,255,0.5)' : this.currentTheme.player;
+            ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+        }
+
+        // Sword slice wedge
+        if (this.player.attackTimer > 15) {
+            const progress    = (25 - this.player.attackTimer) / 10;
+            const cx          = this.player.x + this.player.width / 2;
+            const cy          = this.player.y + this.player.height / 2;
+            const startAngle  = -Math.PI / 2;
+            const endAngle    = this.player.facing === 1 ? 0 : -Math.PI;
+            ctx.fillStyle     = this.currentTheme.attack;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, 45, startAngle, startAngle + (endAngle - startAngle) * progress, this.player.facing === -1);
+            ctx.fill();
+        }
+
+        ctx.restore();
+    }
+
+    // ── Tile generation ───────────────────────────────────────
+
+    // Returns all entities covering a given tile's world x range,
+    // generating missing chunks from worldMap as needed.
+    _getEntitiesForTile(tileIndex) {
+        const tileX      = tileIndex * this.tileWidth;
+        const chunkLeft  = Math.floor(tileX / this.chunkSize);
+        const chunkRight = Math.floor((tileX + this.tileWidth - 1) / this.chunkSize);
+        const entities   = [];
+        for (let ci = chunkLeft; ci <= chunkRight; ci++) {
+            if (!this.worldMap.has(ci)) this.worldMap.set(ci, this.generateChunk(ci));
+            entities.push(...this.worldMap.get(ci));
+        }
+        return entities;
+    }
+
+    // Called every frame — queues generation for tiles near the current view.
+    updateTileGen() {
+        // AI generation disabled for debugging
+        return;
+        
+        const leftTile = Math.floor(this.cameraX / this.tileWidth);
+        // Priority order: current view first, then lookahead, then behind
+        for (const i of [leftTile, leftTile + 1, leftTile + 2, leftTile - 1]) {
+            // Queue slot A if missing
+            if (!this.tileManager.has(i) && !this.tileManager.isPending(i)) {
+                this.tileManager.markPending(i);
+                const tileCameraX = i * this.tileWidth;
+                const wiremeshDataUrl = this.wiremesh.render(
+                    this._getEntitiesForTile(i), this.player, tileCameraX - TILE_OVERLAP,
+                    this.baseGroundY, TILE_GEN_W, this.canvas.height, this.currentEmotion
+                );
+                this.imageGen.enqueueTile(i, wiremeshDataUrl, this.currentEmotion, 'a');
+                console.log(`[tiles] Queued tile ${i}-A`);
+            }
+        }
+    }
+
+    _onTileReady(tileIndex, slot, dataUrl) {
+        console.log(`[tiles] Tile ${tileIndex}-${slot} received (${Math.round(dataUrl.length/1024)}KB)`);
+        const img  = new Image();
+        img.onload = () => {
+            const leftTile = Math.floor(this.cameraX / this.tileWidth);
+            console.log(`[tiles] Tile ${tileIndex}-${slot} decoded: ${img.naturalWidth}x${img.naturalHeight}px`);
+            this.tileManager.store(tileIndex, img, slot, leftTile);
+        };
+        img.onerror = () => {
+            console.error(`[tiles] Failed to decode tile ${tileIndex}-${slot}`);
+            this.tileManager.cancelPending(tileIndex);
+        };
+        img.src = dataUrl;
+    }
+
+    forceRegen() {
+        this.tileManager.clearAll();
+        this.imageGen.queue = [];
+    }
+
+    // ── SSE connection ────────────────────────────────────────
+    _connectEmotionStream() {
+        const connect = () => {
+            const es = new EventSource(`${SERVER_URL}/emotions`);
+            es.onopen    = () => console.log('[sse] Connected to emotion stream.');
+            es.onmessage = (ev) => {
+                try {
+                    const { stress, emotion } = JSON.parse(ev.data);
+                    // Feed raw stress into game (0-100 scale)
+                    this.setTargetStress(stress * 100);
+                    updateEmotionUI(this.currentEmotion, stress);
+                } catch { /* ignore */ }
+            };
+            es.onerror = () => {
+                console.warn('[sse] Disconnected — retrying in 3s');
+                es.close();
+                setTimeout(connect, 3000);
+            };
+        };
+        connect();
+    }
+
+    // ── Main loop ─────────────────────────────────────────────
+    loop() {
+        this.updateChunks();
+        this.updatePhysics();
+        this.updateVisuals();
+        this.updateTileGen();
+        this.draw();
+        requestAnimationFrame(() => this.loop());
+    }
+
+    start() {
+        this.loop();
+        this._connectEmotionStream();
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// DEMO MODE
+// ════════════════════════════════════════════════════════════
+
+let _demoInterval = null;
+const DEMO_CYCLE  = ['NEUTRAL','HAPPY','ANGRY','SAD'];
+let   _demoIdx    = 0;
+
+function toggleDemo() {
+    const btn = document.getElementById('btn-demo');
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; btn.className = ''; return; }
+    btn.className = 'active';
+    _demoIdx = 0;
+    const tick = () => {
+        const e = DEMO_CYCLE[_demoIdx++ % DEMO_CYCLE.length];
+        game.setTargetStress({ HAPPY: 5, NEUTRAL: 30, SAD: 55, ANGRY: 90 }[e]);
+    };
+    tick();
+    _demoInterval = setInterval(tick, 8000);
+}
+
+
+// ════════════════════════════════════════════════════════════
+// MOOD TOGGLE (HAPPY/SAD/ANGRY) — for debugging
+// ════════════════════════════════════════════════════════════
+
+const MOOD_CYCLE = ['HAPPY', 'NEUTRAL', 'SAD', 'ANGRY'];
+let _moodIdx = 0;
+
+function toggleMood() {
+    const btn = document.getElementById('btn-mood');
+    _moodIdx = (_moodIdx + 1) % MOOD_CYCLE.length;
+    const mood = MOOD_CYCLE[_moodIdx];
+    
+    // Set stress level based on mood
+    const stressValue = { HAPPY: 5, NEUTRAL: 35, SAD: 65, ANGRY: 95 }[mood];
+    game.setTargetStress(stressValue);
+    
+    // Update button text and style
+    btn.textContent = `Mood: ${mood}`;
+    btn.className = 'active';
+    
+    console.log(`[mood] Switched to ${mood} (stress: ${stressValue}%)`);
+}
+
+
+// ════════════════════════════════════════════════════════════
+// STATIC API TEST  — hardcoded wiremesh, isolates Replicate pipeline
+// ════════════════════════════════════════════════════════════
+
+function _makeStaticWiremesh() {
+    const c = document.createElement('canvas');
+    c.width = c.height = 512;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = '#FF8800'; ctx.fillRect(0, 430, 512, 82);
+    ctx.fillStyle = '#FF0000';
+    ctx.fillRect(40, 340, 160, 20); ctx.fillRect(230, 270, 130, 20);
+    ctx.fillRect(390, 200, 100, 20); ctx.fillRect(100, 180, 110, 20);
+    ctx.fillStyle = '#0088FF'; ctx.fillRect(70, 305, 20, 35);
+    ctx.fillStyle = '#00FF00'; ctx.fillRect(260, 248, 20, 22);
+    return c.toDataURL('image/png');
+}
+
+async function testImageGen() {
+    const btn = document.getElementById('btn-test-gen');
+    btn.textContent = 'Generating...'; btn.disabled = true;
+
+    const emotion = 'ANGRY';
+    const p       = PROMPTS[emotion];
+    console.log('[test-gen] Sending SDXL request for ANGRY...');
+    setGenDot(true);
+
+    // Use live game wiremesh if available, otherwise static fallback
+    const wiremeshDataUrl = (typeof game !== 'undefined' && game.wiremesh)
+        ? game.wiremesh.render(game.activeEntities, game.player, game.cameraX, game.baseGroundY, game.canvas.width, game.canvas.height)
+        : _makeStaticWiremesh();
+    console.log('[test-gen] Wiremesh captured, sending as img2img input...');
+
+    try {
+        const resp = await fetch(`${SERVER_URL}/generate`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                version: REPLICATE_MODEL_VERSION,
+                input: {
+                    image:               wiremeshDataUrl,
+                    prompt_strength:     0.75,
+                    prompt:              p.pos,
+                    negative_prompt:     p.neg,
+                    width:               512,
+                    height:              512,
+                    num_inference_steps: 20,
+                    guidance_scale:      7.5,
+                    scheduler:           'K_EULER',
+                },
+            }),
+        });
+        const data = await resp.json();
+        if (data.image_data_url) {
+            console.log(`[test-gen] SUCCESS (${Math.round(data.image_data_url.length/1024)}KB) — applying`);
+            const img   = new Image();
+            img.onload  = () => {
+                console.log(`[test-gen] ${img.naturalWidth}x${img.naturalHeight}px`);
+                // Store as tile 0 (current starting tile) for preview
+                const leftTile = Math.floor(game.cameraX / game.tileWidth);
+                game.tileManager.store(leftTile, img, leftTile);
+            };
+            img.onerror = () => console.error('[test-gen] Image decode failed');
+            img.src     = data.image_data_url;
+        } else {
+            console.error('[test-gen] FAILED:', data.error ?? data);
+        }
+    } catch (e) {
+        console.error('[test-gen] Request error:', e.message);
+    } finally {
+        setGenDot(false); btn.textContent = 'Test Image Gen'; btn.disabled = false;
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// FADE TEST  — local only, no API
+// ════════════════════════════════════════════════════════════
+
+function _makeDummyImage(label, bgColor) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 512;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = bgColor; ctx.fillRect(0, 0, 512, 512);
+    const g = ctx.createLinearGradient(0, 0, 512, 512);
+    g.addColorStop(0, 'rgba(0,0,0,0.4)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 42px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(label, 256, 240);
+    ctx.font = '18px monospace'; ctx.fillText('FADE TEST — rendering OK', 256, 285);
+    return c.toDataURL('image/png');
+}
+
+function testFade() {
+    console.log('[test] Storing dummy tile 0 (orange)...');
+    const img1 = new Image();
+    img1.onload = () => {
+        const lt = Math.floor(game.cameraX / game.tileWidth);
+        game.tileManager.store(lt, img1, lt);
+    };
+    img1.src = _makeDummyImage('IMAGE 1 — ORANGE', '#b84a00');
+    setTimeout(() => {
+        console.log('[test] Storing dummy tile 1 (teal)...');
+        const img2 = new Image();
+        img2.onload = () => {
+            const lt = Math.floor(game.cameraX / game.tileWidth);
+            game.tileManager.store(lt + 1, img2, lt);
+        };
+        img2.src = _makeDummyImage('IMAGE 2 — TEAL', '#006b5e');
+    }, 4000);
+}
+
+function runCalibration() {
+    const startBtn = document.getElementById('start-game-btn');
+    const targetBox = document.getElementById('target-box');
+    const calibrationUI = document.getElementById('calibration-ui');
+
+    // 1. Connect to the Python SSE stream just for calibration
+    const es = new EventSource('http://localhost:8765/emotions');
+
+    es.onmessage = (ev) => {
+        try {
+            const data = JSON.parse(ev.data);
+            
+            // 2. Check the 'is_aligned' flag we added to server.py
+            if (data.is_aligned) {
+                targetBox.classList.add('aligned');
+                startBtn.classList.add('ready');
+                startBtn.disabled = false;
+                startBtn.innerText = "START GAME";
+            } else {
+                targetBox.classList.remove('aligned');
+                startBtn.classList.remove('ready');
+                startBtn.disabled = true;
+                startBtn.innerText = "AWAITING FACE...";
+            }
+        } catch (err) {
+            console.error("Calibration stream error:", err);
+        }
+    };
+
+    // 3. Handle the transition to the game
+    startBtn.onclick = () => {
+        es.close(); // Stop the calibration listener
+        
+        // Notify Python to stop calibration mode and start heavy AI
+        fetch('http://localhost:8765/start_game', { method: 'POST' })
+            .then(() => {
+                calibrationUI.style.display = 'none'; 
+                window.dispatchEvent(new Event('calibrationComplete'));
+            });
+    };
+}
+runCalibration();
+
+
+// ════════════════════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════════════════════
+
+window.addEventListener('calibrationComplete', () => {
+    fetch('http://localhost:8765/start_game', { method: 'POST' })
+        .catch(err => console.error("Could not start AI:", err));
+    document.getElementById('game-wrapper').style.display = 'block';
+    document.getElementById('debugUI').style.display = 'flex';
+    document.querySelector('.controls').style.display = 'block';
+    document.getElementById('buttons').style.display = 'flex';
+
+    const game = new OpenWorldEngine('gameCanvas');
+    game.start();
+});
+
+</script>
+</body>
+</html>

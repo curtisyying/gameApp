@@ -8,21 +8,16 @@ const PREDICT_INTERVAL = 300; // Run ~3 times per second
 
 async function initializeSystem() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-        video.srcObject = stream;
-        
-        await new Promise(resolve => { 
-            video.onloadedmetadata = () => {
-                video.play();
-                resolve(); 
-            };
+        const video = document.getElementById('webcam');
+        // Stream is already attached by calibration — just wait for it to be ready
+        await new Promise(resolve => {
+            if (video.readyState >= 2) return resolve();
+            video.oncanplay = resolve;
         });
-        
-        game.start();
-        predictLoop(); // Start the communication loop
-        
+
+        // rest of your init (face detector, model load, predictLoop)...
     } catch (err) {
-        document.getElementById('rawLabel').innerText = "ERROR: Webcam Access";
+        document.getElementById('rawLabel').innerText = "ERROR: See Console";
         console.error("Initialization failed:", err);
     }
 }
