@@ -54,6 +54,7 @@ async function predictLoop() {
             let new_w = Math.min(video.videoWidth - new_x, box.width * 1.2);
 
             cropCanvas.width = cropCanvas.width;
+            console.log("video paused:", video.paused, "| ended:", video.ended, "| currentTime:", video.currentTime);
             cropCtx.drawImage(video, new_x, new_y, new_w, new_h, 0, 0, 48, 48);
             const frameCheck = cropCtx.getImageData(0, 0, 1, 1).data;
             console.log("Top-left pixel:", frameCheck[0], frameCheck[1], frameCheck[2]);
