@@ -6,11 +6,11 @@
     <style>
         body { margin: 0; background: #111; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; color: white; font-family: monospace; }
 
-        #game-wrapper { position: relative; width: 512px; height: 512px; }
+        #game-wrapper { position: relative; width: 800px; height: 800px; }
 
         canvas {
             display: block;
-            width: 512px; height: 512px;
+            width: 800px; height: 800px;
             border: 10px solid #333; border-radius: 5px;
             box-shadow: 0px 10px 30px rgba(0,0,0,0.8);
         }
@@ -46,9 +46,9 @@
         #stress-fill { height: 100%; width: 0%; background: #44ff88; transition: width 0.4s, background 0.5s; }
 
         /* ── Below-canvas UI ── */
-        #debugUI  { width: 512px; display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
+        #debugUI  { width: 800px; display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
         .raw-data { color: #ff5555; } .visual-data { color: #55ff55; } .stress-data { color: #ffaa00; }
-        .controls { width: 512px; text-align: center; color: #888; font-size: 12px; margin-top: 4px; }
+        .controls { width: 800px; text-align: center; color: #888; font-size: 12px; margin-top: 4px; }
         #buttons  { display: flex; gap: 8px; margin-top: 8px; }
         button {
             background: #222; color: #ccc; border: 1px solid #555;
@@ -76,10 +76,18 @@
 </div>
 <div class="controls">ARROWS: Move/Jump/Swim &nbsp;|&nbsp; Z: Dash &nbsp;|&nbsp; X: Sword Slice</div>
 <div id="buttons">
-    <button id="btn-demo"     onclick="toggleDemo()">Demo Mode</button>
+    <button id="btn-face-mode" onclick="toggleFaceMode()">📷 Face Mode: ON</button>
     <button onclick="game.forceRegen()">Regenerate Now</button>
     <button onclick="testFade()">Test Fade</button>
-    <button id="btn-test-gen" onclick="testImageGen()">Test Image Gen</button>
+</div>
+<div id="manual-controls" style="display: none; margin-top: 8px;">
+    <div style="text-align: center; color: #888; font-size: 11px; margin-bottom: 4px;">Manual Emotion Control</div>
+    <div style="display: flex; gap: 8px; justify-content: center;">
+        <button onclick="setManualEmotion('HAPPY')">😊 Happy</button>
+        <button onclick="setManualEmotion('NEUTRAL')">😐 Neutral</button>
+        <button onclick="setManualEmotion('SAD')">😢 Sad</button>
+        <button onclick="setManualEmotion('ANGRY')">😠 Angry</button>
+    </div>
 </div>
 
 <script>
@@ -141,6 +149,16 @@ class ImageGenerator {
         if (this.queue.some(q => q.tileIndex === tileIndex && q.slot === slot)) return;
         this.queue.push({ tileIndex, wiremeshDataUrl, emotion, slot });
         this._process();
+    }
+
+    cancelTile(tileIndex, slot) {
+        const before = this.queue.length;
+        this.queue = this.queue.filter(q => !(q.tileIndex === tileIndex && q.slot === slot));
+        const removed = before - this.queue.length;
+        if (removed > 0) {
+            console.log(`[gen] Cancelled ${removed} queued request(s) for tile ${tileIndex}-${slot}`);
+        }
+        return removed > 0;
     }
 
     async _process() {
@@ -404,7 +422,7 @@ class WiremeshRenderer {
 
 class TileManager {
     constructor() {
-        this.tiles   = new Map(); // tileIndex → { a: Image|null, b: Image|null, pendingB: bool }
+        this.tiles   = new Map(); // tileIndex → { a: Image|null, b: Image|null, pendingB: bool, emotion: string, nextEmotion: string|null }
         this.pending = new Set(); // tileIndex where slot A is in flight
     }
 
@@ -424,11 +442,18 @@ class TileManager {
     cancelPending(i)  { this.pending.delete(i); }
     cancelPendingB(i) { if (this.tiles.has(i)) this.tiles.get(i).pendingB = false; }
 
-    store(i, img, slot, currentLeftTile) {
-        if (!this.tiles.has(i)) this.tiles.set(i, { a: null, b: null, pendingB: false });
+    store(i, img, slot, currentLeftTile, emotion = null) {
+        if (!this.tiles.has(i)) this.tiles.set(i, { a: null, b: null, pendingB: false, emotion: null, nextEmotion: null });
         const t = this.tiles.get(i);
-        if (slot === 'a') { t.a = img; this.pending.delete(i); }
-        else              { t.b = img; t.pendingB = false; }
+        if (slot === 'a') { 
+            t.a = img; 
+            t.pending = false;
+            this.pending.delete(i); 
+            if (emotion) t.emotion = emotion;
+        } else { 
+            t.b = img; 
+            t.pendingB = false; 
+        }
         // Evict tiles far from current view
         for (const k of this.tiles.keys()) {
             if (k < currentLeftTile - 3 || k > currentLeftTile + 6) this.tiles.delete(k);
@@ -436,6 +461,30 @@ class TileManager {
     }
 
     clearAll() { this.tiles.clear(); this.pending.clear(); }
+
+    getEmotion(i) {
+        const t = this.tiles.get(i);
+        return t ? t.emotion : null;
+    }
+
+    getAllTileIndices() {
+        return Array.from(this.tiles.keys());
+    }
+
+    setNextEmotion(i, emotion) {
+        const t = this.tiles.get(i);
+        if (t) t.nextEmotion = emotion;
+    }
+
+    getNextEmotion(i) {
+        const t = this.tiles.get(i);
+        return t ? t.nextEmotion : null;
+    }
+
+    clearNextEmotion(i) {
+        const t = this.tiles.get(i);
+        if (t) t.nextEmotion = null;
+    }
 }
 
 
@@ -492,9 +541,32 @@ class PixelDissolve {
                 out:  ctx.createImageData(TILE_GEN_W, 512),
                 outCanvas: c, outCtx: ctx,
                 lastT: -1,
+                dissolving: false,
+                dissolveStart: 0,
+                dissolveDuration: 4000, // 4 seconds
             });
         }
         return this.tiles.get(tileIndex);
+    }
+
+    // Set images for a tile and trigger dissolve if both are present
+    setImages(tileIndex, imgA, imgB = null) {
+        const s = this._state(tileIndex);
+        if (imgA && s.imgA !== imgA) {
+            s.imgA = imgA;
+            s.pxA = this._readPixels(imgA);
+        }
+        if (imgB && s.imgB !== imgB) {
+            s.imgB = imgB;
+            s.pxB = this._readPixels(imgB);
+            // Trigger dissolve animation
+            if (!s.dissolving && s.imgA && s.imgB) {
+                s.dissolving = true;
+                s.dissolveStart = Date.now();
+                s.lastT = 0;
+                console.log(`[dissolve] Starting transition for tile ${tileIndex}`);
+            }
+        }
     }
 
     // Returns the best available canvas for this tile: dissolve result if ready, else raw imgA.
@@ -522,7 +594,9 @@ class PixelDissolve {
         const pOut = s.out.data, pA = s.pxA, pB = s.pxB, noise = this.noise;
         for (let i = 0; i < TILE_GEN_W * 512; i++) {
             const j     = i << 2;
-            const blend = Math.max(0, Math.min(1, (noise[i] - (t - SOFT)) / (SOFT * 2)));
+            // Invert the blend calculation so it goes from A (t=0) to B (t=1)
+            const threshold = 1 - t; // Reverse: start at 1, end at 0
+            const blend = Math.max(0, Math.min(1, (noise[i] - (threshold - SOFT)) / (SOFT * 2)));
             const inv   = 1 - blend;
             pOut[j]   = (pA[j]   * inv + pB[j]   * blend) | 0;
             pOut[j+1] = (pA[j+1] * inv + pB[j+1] * blend) | 0;
@@ -558,6 +632,42 @@ class PixelDissolve {
             ctx.drawImage(this.gradCanvas, screenX, 0, TILE_GEN_W, H);
         } else {
             ctx.drawImage(imgA, screenX, 0, TILE_GEN_W, H);
+        }
+    }
+
+    // Update dissolve animations - call this every frame
+    updateAnimations(tileManager, currentEmotion, onDissolveComplete) {
+        const now = Date.now();
+        for (const [tileIndex, s] of this.tiles.entries()) {
+            if (s.dissolving) {
+                const elapsed = now - s.dissolveStart;
+                const t = Math.min(1.0, elapsed / s.dissolveDuration);
+                this._compute(s, t);
+                
+                if (t >= 1.0) {
+                    // Dissolve complete - promote B to A
+                    s.dissolving = false;
+                    s.imgA = s.imgB;
+                    s.pxA = s.pxB;
+                    s.imgB = null;
+                    s.pxB = null;
+                    s.lastT = -1; // Reset so we show raw imgA again
+                    
+                    // Update TileManager emotion tracking to match promoted image
+                    if (tileManager && tileManager.has(tileIndex)) {
+                        const leftTile = 0; // Dummy value, won't trigger eviction
+                        tileManager.store(tileIndex, s.imgA, 'a', leftTile, currentEmotion);
+                        console.log(`[dissolve] Completed transition for tile ${tileIndex}, updated emotion to ${currentEmotion}`);
+                    } else {
+                        console.log(`[dissolve] Completed transition for tile ${tileIndex}`);
+                    }
+                    
+                    // Notify callback for potential next transition
+                    if (onDissolveComplete) {
+                        onDissolveComplete(tileIndex);
+                    }
+                }
+            }
         }
     }
 
@@ -607,10 +717,10 @@ class OpenWorldEngine {
         this.player = {
             x: 256, y: 200, width: 24, height: 36,
             vx: 0, vy: 0,
-            speed: 5.0, jump: -9.0, grounded: false, facing: 1,
-            acceleration: 0.4,
-            deceleration: 0.22,
-            isDashing: false, dashTimer: 0, dashSpeed: 4.0,
+            speed: 2.5, jump: -7.0, grounded: false, facing: 1, // Slower sideways: 2.5 instead of 3.5
+            acceleration: 0.20,
+            deceleration: 0.12,
+            isDashing: false, dashTimer: 0, dashSpeed: 2.2,
             dashCooldown: 0, hasAirDashed: false,
             isAttacking: false, attackTimer: 0,
             animState: 'standing',
@@ -626,12 +736,14 @@ class OpenWorldEngine {
         };
 
         this.currentTheme    = this.palettes.NEUTRAL; // will be set properly on first updateVisuals()
-        this.targetStress    = 0;
-        this.visualStress    = 0;
+        this.targetStress    = 0.5;
+        this.visualStress    = 0.5;
         this.smoothingFactor = 0.015;
 
-        // ── AI background tile layer ──
         this.currentEmotion = 'NEUTRAL';
+        this.faceMode = true; // true = facial recognition, false = manual control
+
+        // ── AI background tile layer ──
         this.tileWidth      = 512; // matches canvas and generation size
 
         this.wiremesh    = new WiremeshRenderer();
@@ -702,10 +814,75 @@ class OpenWorldEngine {
 
         // Trigger regeneration when emotion changes
         if (this.currentEmotion !== newEmotion) {
+            console.log(`[emotion] Changing from ${this.currentEmotion} to ${newEmotion}`);
+            const oldEmotion = this.currentEmotion;
             this.currentEmotion = newEmotion;
             updateEmotionUI(newEmotion, s);
-            this.tileManager.clearAll();
-            this.imageGen.queue = [];
+            
+            // Determine which tiles need to be handled
+            const currentTile = Math.floor(this.cameraX / this.tileWidth);
+            const tilesToHandle = new Set();
+            
+            // Add all existing tiles
+            const existingTiles = this.tileManager.getAllTileIndices();
+            existingTiles.forEach(i => tilesToHandle.add(i));
+            
+            // Add nearby tiles that should be visible (even if not generated yet)
+            for (const i of [currentTile - 1, currentTile, currentTile + 1, currentTile + 2]) {
+                tilesToHandle.add(i);
+            }
+            
+            // Handle each tile based on its state
+            for (const tileIndex of tilesToHandle) {
+                const tileExists = this.tileManager.has(tileIndex);
+                
+                if (tileExists) {
+                    // Tile exists - handle B-slot transition
+                    const dissolveState = this.dissolve._state(tileIndex);
+                    
+                    // Case 1: Dissolve is actively running - queue next emotion
+                    if (dissolveState.dissolving) {
+                        this.tileManager.setNextEmotion(tileIndex, newEmotion);
+                        console.log(`[emotion] Tile ${tileIndex} dissolving - queued ${newEmotion} for after completion`);
+                    }
+                    // Case 2: B-slot is pending (not arrived yet) - cancel and replace
+                    else if (this.tileManager.isPendingB(tileIndex)) {
+                        this.imageGen.cancelTile(tileIndex, 'b');
+                        this.tileManager.cancelPendingB(tileIndex);
+                        this.tileManager.markPendingB(tileIndex);
+                        const tileCameraX = tileIndex * this.tileWidth;
+                        const wiremeshDataUrl = this.wiremesh.render(
+                            this._getEntitiesForTile(tileIndex), this.player, tileCameraX - TILE_OVERLAP,
+                            this.baseGroundY, TILE_GEN_W, this.canvas.height, newEmotion
+                        );
+                        this.imageGen.enqueueTile(tileIndex, wiremeshDataUrl, newEmotion, 'b');
+                        console.log(`[emotion] Tile ${tileIndex}-B pending - cancelled and re-queued for ${newEmotion}`);
+                    }
+                    // Case 3: No B-slot or dissolve - queue normally
+                    else {
+                        this.tileManager.markPendingB(tileIndex);
+                        const tileCameraX = tileIndex * this.tileWidth;
+                        const wiremeshDataUrl = this.wiremesh.render(
+                            this._getEntitiesForTile(tileIndex), this.player, tileCameraX - TILE_OVERLAP,
+                            this.baseGroundY, TILE_GEN_W, this.canvas.height, newEmotion
+                        );
+                        this.imageGen.enqueueTile(tileIndex, wiremeshDataUrl, newEmotion, 'b');
+                        console.log(`[emotion] Queued tile ${tileIndex}-B for ${oldEmotion}→${newEmotion} transition`);
+                    }
+                } else {
+                    // Tile doesn't exist yet - generate as A-slot with new emotion
+                    if (!this.tileManager.isPending(tileIndex)) {
+                        this.tileManager.markPending(tileIndex);
+                        const tileCameraX = tileIndex * this.tileWidth;
+                        const wiremeshDataUrl = this.wiremesh.render(
+                            this._getEntitiesForTile(tileIndex), this.player, tileCameraX - TILE_OVERLAP,
+                            this.baseGroundY, TILE_GEN_W, this.canvas.height, newEmotion
+                        );
+                        this.imageGen.enqueueTile(tileIndex, wiremeshDataUrl, newEmotion, 'a');
+                        console.log(`[emotion] Queued new tile ${tileIndex}-A with ${newEmotion}`);
+                    }
+                }
+            }
         }
     }
 
@@ -936,20 +1113,21 @@ class OpenWorldEngine {
         const rightScreenX = (leftTile + 1) * this.tileWidth - this.cameraX;
         let hasBg = false;
 
-        const { a: lA } = this.tileManager.getImages(leftTile);
-        const { a: rA } = this.tileManager.getImages(leftTile + 1);
+        // Get dissolve canvas (handles A→B transitions automatically)
+        const lCanvas = this.dissolve.getCanvas(leftTile);
+        const rCanvas = this.dissolve.getCanvas(leftTile + 1);
 
         // Each tile is TILE_GEN_W=640px wide (64px extra on each side).
         // Drawing it shifted left by TILE_OVERLAP creates a 128px physical overlap zone.
         // The inner-edge fade is only applied when both tiles are present — no jarring
         // fade flash when only one tile has loaded yet.
-        if (lA) {
+        if (lCanvas) {
             hasBg = true;
-            this.dissolve.draw(ctx, leftTile,     lA, leftScreenX  - TILE_OVERLAP, H, 0,                      rA ? TILE_BLEND_W : 0);
+            this.dissolve.draw(ctx, leftTile,     lCanvas, leftScreenX  - TILE_OVERLAP, H, 0,                        rCanvas ? TILE_BLEND_W : 0);
         }
-        if (rA) {
+        if (rCanvas) {
             hasBg = true;
-            this.dissolve.draw(ctx, leftTile + 1, rA, rightScreenX - TILE_OVERLAP, H, lA ? TILE_BLEND_W : 0,  0);
+            this.dissolve.draw(ctx, leftTile + 1, rCanvas, rightScreenX - TILE_OVERLAP, H, lCanvas ? TILE_BLEND_W : 0,  0);
         }
 
         // 3. Game world
@@ -1086,11 +1264,20 @@ class OpenWorldEngine {
         img.onload = () => {
             const leftTile = Math.floor(this.cameraX / this.tileWidth);
             console.log(`[tiles] Tile ${tileIndex}-${slot} decoded: ${img.naturalWidth}x${img.naturalHeight}px`);
-            this.tileManager.store(tileIndex, img, slot, leftTile);
+            this.tileManager.store(tileIndex, img, slot, leftTile, this.currentEmotion);
+            
+            // Update dissolve system
+            const { a, b } = this.tileManager.getImages(tileIndex);
+            if (slot === 'a' && a) {
+                this.dissolve.setImages(tileIndex, a, null);
+            } else if (slot === 'b' && a && b) {
+                this.dissolve.setImages(tileIndex, a, b);
+            }
         };
         img.onerror = () => {
             console.error(`[tiles] Failed to decode tile ${tileIndex}-${slot}`);
-            this.tileManager.cancelPending(tileIndex);
+            if (slot === 'a') this.tileManager.cancelPending(tileIndex);
+            else this.tileManager.cancelPendingB(tileIndex);
         };
         img.src = dataUrl;
     }
@@ -1102,16 +1289,16 @@ class OpenWorldEngine {
 
     // ── SSE connection ────────────────────────────────────────
     _connectEmotionStream() {
+        if (!this.faceMode) {
+            console.log('[sse] Face mode disabled, skipping emotion stream connection');
+            return;
+        }
         const connect = () => {
             const es = new EventSource(`${SERVER_URL}/emotions`);
-            es.onopen    = () => console.log('[sse] Connected to emotion stream.');
-            es.onmessage = (ev) => {
-                try {
-                    const { stress, emotion } = JSON.parse(ev.data);
-                    // Feed raw stress into game (0-100 scale)
-                    this.setTargetStress(stress * 100);
-                    updateEmotionUI(this.currentEmotion, stress);
-                } catch { /* ignore */ }
+            es.onmessage = (e) => {
+                if (!this.faceMode) return; // Ignore if face mode is off
+                const data = JSON.parse(e.data);
+                this.setTargetStress(data.stress * 100);
             };
             es.onerror = () => {
                 console.warn('[sse] Disconnected — retrying in 3s');
@@ -1122,12 +1309,31 @@ class OpenWorldEngine {
         connect();
     }
 
+    // ── Dissolve completion callback ─────────────────────────
+    _onDissolveComplete(tileIndex) {
+        const nextEmotion = this.tileManager.getNextEmotion(tileIndex);
+        if (nextEmotion) {
+            console.log(`[dissolve] Tile ${tileIndex} complete - starting queued transition to ${nextEmotion}`);
+            this.tileManager.clearNextEmotion(tileIndex);
+            
+            // Queue B-slot for the next emotion
+            this.tileManager.markPendingB(tileIndex);
+            const tileCameraX = tileIndex * this.tileWidth;
+            const wiremeshDataUrl = this.wiremesh.render(
+                this._getEntitiesForTile(tileIndex), this.player, tileCameraX - TILE_OVERLAP,
+                this.baseGroundY, TILE_GEN_W, this.canvas.height, nextEmotion
+            );
+            this.imageGen.enqueueTile(tileIndex, wiremeshDataUrl, nextEmotion, 'b');
+        }
+    }
+
     // ── Main loop ─────────────────────────────────────────────
     loop() {
         this.updateChunks();
         this.updatePhysics();
         this.updateVisuals();
         this.updateTileGen();
+        this.dissolve.updateAnimations(this.tileManager, this.currentEmotion, (tileIndex) => this._onDissolveComplete(tileIndex)); // Update A→B dissolve transitions
         this.draw();
         requestAnimationFrame(() => this.loop());
     }
@@ -1143,45 +1349,38 @@ class OpenWorldEngine {
 // DEMO MODE
 // ════════════════════════════════════════════════════════════
 
-let _demoInterval = null;
-const DEMO_CYCLE  = ['NEUTRAL','HAPPY','ANGRY','SAD'];
-let   _demoIdx    = 0;
+// ════════════════════════════════════════════════════════════
+// FACE MODE TOGGLE — Switch between facial recognition and manual control
+// ════════════════════════════════════════════════════════════
 
-function toggleDemo() {
-    const btn = document.getElementById('btn-demo');
-    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; btn.className = ''; return; }
-    btn.className = 'active';
-    _demoIdx = 0;
-    const tick = () => {
-        const e = DEMO_CYCLE[_demoIdx++ % DEMO_CYCLE.length];
-        game.setTargetStress({ HAPPY: 5, NEUTRAL: 30, SAD: 55, ANGRY: 90 }[e]);
-    };
-    tick();
-    _demoInterval = setInterval(tick, 8000);
+function toggleFaceMode() {
+    game.faceMode = !game.faceMode;
+    const btn = document.getElementById('btn-face-mode');
+    const manualControls = document.getElementById('manual-controls');
+    
+    if (game.faceMode) {
+        btn.textContent = '📷 Face Mode: ON';
+        btn.className = '';
+        manualControls.style.display = 'none';
+        console.log('[mode] Switched to facial recognition mode');
+        // Reconnect emotion stream
+        game._connectEmotionStream();
+    } else {
+        btn.textContent = '🎮 Manual Mode';
+        btn.className = 'active';
+        manualControls.style.display = 'block';
+        console.log('[mode] Switched to manual control mode');
+    }
 }
 
-
-// ════════════════════════════════════════════════════════════
-// MOOD TOGGLE (HAPPY/SAD/ANGRY) — for debugging
-// ════════════════════════════════════════════════════════════
-
-const MOOD_CYCLE = ['HAPPY', 'NEUTRAL', 'SAD', 'ANGRY'];
-let _moodIdx = 0;
-
-function toggleMood() {
-    const btn = document.getElementById('btn-mood');
-    _moodIdx = (_moodIdx + 1) % MOOD_CYCLE.length;
-    const mood = MOOD_CYCLE[_moodIdx];
-    
-    // Set stress level based on mood
-    const stressValue = { HAPPY: 5, NEUTRAL: 35, SAD: 65, ANGRY: 95 }[mood];
+function setManualEmotion(emotion) {
+    if (game.faceMode) {
+        console.warn('[manual] Cannot set emotion in face mode');
+        return;
+    }
+    const stressValue = { HAPPY: 10, NEUTRAL: 35, SAD: 60, ANGRY: 90 }[emotion];
     game.setTargetStress(stressValue);
-    
-    // Update button text and style
-    btn.textContent = `Mood: ${mood}`;
-    btn.className = 'active';
-    
-    console.log(`[mood] Switched to ${mood} (stress: ${stressValue}%)`);
+    console.log(`[manual] Set emotion to ${emotion} (stress: ${stressValue}%)`);
 }
 
 
