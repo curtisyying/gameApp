@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Open World Engine</title>
+    <style>
+        body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { background: #87CEEB; border: 2px solid #fff; width: 800px; height: 400px; }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<script>
+class OpenWorldEngine {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        
+        this.keys = { right: false, left: false, up: false };
+        this.cameraX = 0;
+        this.groundY = 350;
+        
+        // chunk system setup
+        this.chunkSize = 1000; 
+        this.worldMap = new Map(); 
+        this.activeEntities = []; 
+        
+        // color codes mapping for your ai assets later
+        this.colors = {
+            player: '#0000FF',   // blue
+            platform: '#228B22', // green
+            ground: '#8B4513',   // brown
+            enemy: '#FF0000'     // red
+        };
+
+        // player object
+        this.player = { 
+            x: 400, y: 200, width: 20, height: 30, 
+            vx: 0, vy: 0, speed: 5, jump: -12, grounded: false 
+        };
+
+        this.setupInputs();
+    }
+
+    setupInputs() {
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right = true;
+            if (e.code === 'ArrowLeft') this.keys.left = true;
+            if (e.code === 'ArrowUp') this.keys.up = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowRight') this.keys.right = false;
+            if (e.code === 'ArrowLeft') this.keys.left = false;
+            if (e.code === 'ArrowUp') this.keys.up = false;
+        });
+    }
+
+    generateChunk(chunkIndex) {
+        let chunkData = [];
+        let startX = chunkIndex * this.chunkSize;
+        let endX = startX + this.chunkSize;
+        
+        // don't start right on the chunk border
+        let currentX = startX + Math.random() * 100;
+
+        // fill this 1000px slice with random platforms and enemies
+        while (currentX < endX - 150) {
+            let pWidth = Math.random() * 120 + 80;
+            // keep platforms reachable above the ground
+            let pY = this.groundY - (Math.random() * 100 + 50); 
+            
+            chunkData.push({ type: 'platform', x: currentX, y: pY, width: pWidth, height: 20 });
+
+            // 30% chance to put a red enemy on this platform
+            if (Math.random() < 0.3) {
+                chunkData.push({ 
+                    type: 'enemy', 
+                    x: currentX + pWidth/2 - 10, 
+                    y: pY - 20, 
+                    width: 20, height: 20 
+                });
+            }
+
+            // advance X to the next gap
+            currentX += pWidth + (Math.random() * 120 + 60); 
+        }
+
+        return chunkData;
+    }
+
+    updateChunks() {
+        // math.floor handles negative chunks automatically (e.g. -0.5 becomes -1)
+        let playerChunkIndex = Math.floor(this.player.x / this.chunkSize);
+
+        // we load the chunk we are standing in, plus left and right neighbors
+        let chunksToLoad = [playerChunkIndex - 1, playerChunkIndex, playerChunkIndex + 1];
+        
+        // reset active render list
+        this.activeEntities = [];
+
+        for (let index of chunksToLoad) {
+            // if chunk doesn't exist yet, generate and save it permanently
+            if (!this.worldMap.has(index)) {
+                this.worldMap.set(index, this.generateChunk(index));
+            }
+            
+            // dump this chunk's contents into the active array
+            this.activeEntities.push(...this.worldMap.get(index));
+        }
+    }
+
+    updatePhysics() {
+        // horizontal movement
+        if (this.keys.right) this.player.vx = this.player.speed;
+        else if (this.keys.left) this.player.vx = -this.player.speed;
+        else this.player.vx = 0;
+
+        // jumping
+        if (this.keys.up && this.player.grounded) {
+            this.player.vy = this.player.jump;
+            this.player.grounded = false;
+        }
+
+        // apply gravity
+        this.player.vy += 0.6; 
+        
+        this.player.x += this.player.vx;
+        this.player.y += this.player.vy;
+
+        // keep camera centered on the player
+        this.cameraX = this.player.x - (this.canvas.width / 2);
+
+        this.player.grounded = false;
+
+        // 1. floor collision
+        if (this.player.y + this.player.height >= this.groundY) {
+            this.player.y = this.groundY - this.player.height;
+            this.player.vy = 0;
+            this.player.grounded = true;
+        }
+
+        // 2. platform collision
+        for (let entity of this.activeEntities) {
+            if (entity.type === 'platform') {
+                // simple AABB: only collide if falling downwards onto the top of it
+                if (this.player.vy >= 0 && 
+                    this.player.x + this.player.width > entity.x && 
+                    this.player.x < entity.x + entity.width && 
+                    this.player.y + this.player.height >= entity.y && 
+                    this.player.y + this.player.height <= entity.y + this.player.vy + 2) {
+                    
+                    this.player.grounded = true;
+                    this.player.vy = 0;
+                    this.player.y = entity.y - this.player.height;
+                }
+            }
+        }
+    }
+
+    draw() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        this.ctx.save();
+        this.ctx.translate(-this.cameraX, 0);
+
+        // draw an infinitely scrolling ground based on camera position
+        this.ctx.fillStyle = this.colors.ground;
+        // draw slightly wider than the screen so edges never tear
+        this.ctx.fillRect(this.cameraX - 100, this.groundY, this.canvas.width + 200, this.canvas.height - this.groundY);
+
+        // draw platforms and enemies from the active chunks
+        for (let entity of this.activeEntities) {
+            if (entity.type === 'platform') {
+                this.ctx.fillStyle = this.colors.platform;
+                this.ctx.fillRect(entity.x, entity.y, entity.width, entity.height);
+            } else if (entity.type === 'enemy') {
+                this.ctx.fillStyle = this.colors.enemy;
+                this.ctx.fillRect(entity.x, entity.y, entity.width, entity.height);
+            }
+        }
+
+        // draw player
+        this.ctx.fillStyle = this.colors.player;
+        this.ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+
+        this.ctx.restore();
+    }
+
+    loop() {
+        this.updateChunks(); 
+        this.updatePhysics();
+        this.draw();
+        requestAnimationFrame(() => this.loop());
+    }
+
+    start() {
+        this.loop();
+    }
+}
+
+// init and run
+const game = new OpenWorldEngine('gameCanvas');
+game.start();
+</script>
+
+</body>
+</html>
