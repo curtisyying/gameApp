@@ -6,7 +6,7 @@ class StressDirector {
         this.lastStateChangeTime = 0;
         // User stays in a state for min 2 seconds before transition back
         this.minStateDuration = 2000; 
-        // To change state, 
+        // To change state
         this.stateChangeBuffer = 0.07;
         
         // Define our base thresholds
