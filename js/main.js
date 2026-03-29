@@ -41,7 +41,7 @@ async function initializeSystem() {
 }
 
 async function predictLoop() {
-    console.log("video readyState in loop:", video.readyState, "| size:", video.videoWidth, video.videoHeight);
+    console.clear();
     if (video.readyState === 4) {
         const faces = await faceDetector.estimateFaces(video);
         console.log("Faces detected:", faces.length);
