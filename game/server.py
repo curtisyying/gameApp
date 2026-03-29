@@ -38,8 +38,12 @@ _emotion_state = {
     "emotion": "Neutral",
     "stress": 0.0,
     "timestamp": 0.0,
+    "is_aligned": False,
 }
 _state_lock = threading.Lock()
+
+_latest_frame = None
+_is_calibrating = True
 
 # ── Server-side stress smoothing buffer ──
 _stress_buffer = []
@@ -59,32 +63,56 @@ def _webcam_thread():
             print("[server] On macOS go to System Settings → Privacy & Security → Camera and enable access for Terminal.")
             return
         print("[server] Webcam started. Streaming emotions.")
+        frame_count = 0
         while True:
             ret, frame = cap.read()
             if not ret:
-                time.sleep(0.1)
+                time.sleep(0.033)
                 continue
-            results = detector.predict(frame)
-            if results:
-                r = results[0]
-                raw_stress = float(r["stress_score"]) / 100.0
-                
-                # Add to buffer and maintain size
-                _stress_buffer.append(raw_stress)
-                if len(_stress_buffer) > _buffer_size:
-                    _stress_buffer.pop(0)
-                
-                # Calculate smoothed average
-                smoothed_stress = sum(_stress_buffer) / len(_stress_buffer)
-                stress_normalized = round(smoothed_stress, 4)
-                
-                with _state_lock:
-                    _emotion_state["emotion"] = r["emotion"]
-                    _emotion_state["stress"] = stress_normalized
-                    _emotion_state["timestamp"] = time.time()
-                # Debug output
-                print(f"[emotion] {r['emotion']:8s} | Raw: {raw_stress:.4f} → Smoothed: {stress_normalized:.4f} | Prob: {r['emotion_prob']:.2f}")
-            time.sleep(0.33)  # ~3 fps — plenty for mood tracking
+            
+            global _latest_frame, _is_calibrating
+            _latest_frame = frame.copy()
+
+            frame_count += 1
+            if frame_count % 6 == 0:
+                results = detector.predict(frame, detection_only=_is_calibrating)
+                if _is_calibrating:
+                    is_aligned = False
+                    if results:
+                        x, y, w, h = results[0]["box"]
+                        frame_h, frame_w = frame.shape[:2]
+                        face_center_x = x + w / 2
+                        face_center_ratio = face_center_x / frame_w
+                        face_size_ratio = w / frame_w
+
+                        # Face must be roughly centered (middle 40%) and large enough (20%+ of frame width)
+                        if 0.33 < face_center_ratio < 0.67 and face_size_ratio > 0.25:
+                            is_aligned = True
+
+                    with _state_lock:
+                        _emotion_state["is_aligned"] = is_aligned
+                        _emotion_state["timestamp"] = time.time()
+                else:
+                    if results:
+                        r = results[0]
+                        raw_stress = float(r["stress_score"]) / 100.0
+                        
+                        # Add to buffer and maintain size
+                        _stress_buffer.append(raw_stress)
+                        if len(_stress_buffer) > _buffer_size:
+                            _stress_buffer.pop(0)
+                        
+                        # Calculate smoothed average
+                        smoothed_stress = sum(_stress_buffer) / len(_stress_buffer)
+                        stress_normalized = round(smoothed_stress, 4)
+                        
+                        with _state_lock:
+                            _emotion_state["emotion"] = r["emotion"]
+                            _emotion_state["stress"] = stress_normalized
+                            _emotion_state["timestamp"] = time.time()
+                        # Debug output
+                        print(f"[emotion] {r['emotion']:8s} | Raw: {raw_stress:.4f} → Smoothed: {stress_normalized:.4f} | Prob: {r['emotion_prob']:.2f}")
+            time.sleep(0.033)  # ~3 fps — plenty for mood tracking
         cap.release()
     except Exception as e:
         print(f"[server] Webcam thread crashed: {e}")
@@ -118,6 +146,7 @@ def stream_emotions():
                     payload = json.dumps({
                         "emotion": _emotion_state["emotion"],
                         "stress":  _emotion_state["stress"],
+                        "is_aligned": _emotion_state.get("is_aligned", False) # <--- CRITICAL
                     })
                     yield f"data: {payload}\n\n"
             time.sleep(0.1)
@@ -235,6 +264,38 @@ def generate():
 
     print(f"[generate] TIMEOUT waiting for prediction {pred_id}")
     return jsonify({"error": "Timed out waiting for Replicate"}), 504
+
+def generate_video_frames():
+    """Yields webcam frames as a continuous MJPEG stream."""
+    global _latest_frame
+    while True:
+        if _latest_frame is not None:
+            # OPTIMIZE: Resize frame to 320px wide (keeping aspect ratio) to send 90% less data
+            h, w = _latest_frame.shape[:2]
+            new_w = 320
+            new_h = int(h * (new_w / w))
+            small_frame = cv2.resize(_latest_frame, (new_w, new_h))
+            
+            # Compress to JPEG with 60% quality (default is ~95%)
+            ret, buffer = cv2.imencode('.jpg', small_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.05) # ~20 FPS for the visual stream
+
+@app.route('/video_feed')
+def video_feed():
+    """Route that the browser connects to for the live webcam feed."""
+    return Response(generate_video_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/start_game', methods=['POST'])
+def start_game():
+    """Triggered by the frontend to wake up the stress AI."""
+    global _is_calibrating
+    _is_calibrating = False
+    print("[server] Calibration complete. Stress AI activated!")
+    return jsonify({"status": "Stress detection started"})
 
 
 # ── Boot ────────────────────────────────────────────────────────────────────

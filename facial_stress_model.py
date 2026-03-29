@@ -83,7 +83,7 @@ class FacialStressModel:
     # def surprise(p):
     #     return 2.478 * math.log(0.2825 * p + 1.003)
 
-    def predict(self, frame):
+    def predict(self, frame, detection_only=False):
         """Processes a frame, finds the main face, and predicts stress/emotion."""
         results = []
         if self.model is None:
@@ -100,6 +100,10 @@ class FacialStressModel:
 
         if len(faces) == 0:
             return results
+        
+        if detection_only:
+            # RETURN EARLY: We found the box, but skip the .h5 deep learning math
+            return [{"box": faces[0], "is_aligned": True}]
             
         # Sort faces by area (width * height) descending, and keep only the first one
         faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
