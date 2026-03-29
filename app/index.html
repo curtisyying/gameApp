@@ -1063,9 +1063,6 @@ class OpenWorldEngine {
 
     // Called every frame — queues generation for tiles near the current view.
     updateTileGen() {
-        // AI generation disabled for debugging
-        return;
-        
         const leftTile = Math.floor(this.cameraX / this.tileWidth);
         // Priority order: current view first, then lookahead, then behind
         for (const i of [leftTile, leftTile + 1, leftTile + 2, leftTile - 1]) {
