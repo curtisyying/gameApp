@@ -23,7 +23,8 @@ from dotenv import load_dotenv
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_root, ".env"))
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add parent directory to path so we can import facial_stress_model from project root
+sys.path.insert(0, _root)
 from facial_stress_model import FacialStressModel
 
 from flask import Flask, Response, request, jsonify
@@ -40,12 +41,17 @@ _emotion_state = {
 }
 _state_lock = threading.Lock()
 
+# ── Server-side stress smoothing buffer ──
+_stress_buffer = []
+_buffer_size = 10  # Average over 10 frames to smooth jumpiness
+
 
 def _webcam_thread():
     """Runs facial detection at ~3 fps and updates _emotion_state."""
     try:
         print("[server] Loading TF model (this can take 10-15 s)...")
-        detector = FacialStressModel()
+        model_path = os.path.join(_root, "models", "model_fer_bloss.h5")
+        detector = FacialStressModel(model_path=model_path)
         print("[server] Model loaded. Opening webcam...")
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
@@ -61,10 +67,23 @@ def _webcam_thread():
             results = detector.predict(frame)
             if results:
                 r = results[0]
+                raw_stress = float(r["stress_score"]) / 100.0
+                
+                # Add to buffer and maintain size
+                _stress_buffer.append(raw_stress)
+                if len(_stress_buffer) > _buffer_size:
+                    _stress_buffer.pop(0)
+                
+                # Calculate smoothed average
+                smoothed_stress = sum(_stress_buffer) / len(_stress_buffer)
+                stress_normalized = round(smoothed_stress, 4)
+                
                 with _state_lock:
                     _emotion_state["emotion"] = r["emotion"]
-                    _emotion_state["stress"] = round(float(r["stress_score"]) / 100.0, 4)
+                    _emotion_state["stress"] = stress_normalized
                     _emotion_state["timestamp"] = time.time()
+                # Debug output
+                print(f"[emotion] {r['emotion']:8s} | Raw: {raw_stress:.4f} → Smoothed: {stress_normalized:.4f} | Prob: {r['emotion_prob']:.2f}")
             time.sleep(0.33)  # ~3 fps — plenty for mood tracking
         cap.release()
     except Exception as e:

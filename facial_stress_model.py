@@ -124,11 +124,6 @@ class FacialStressModel:
             face_normalized = face_resized / 255.0
             input_img = np.reshape(face_normalized, (1, 48, 48, 1))
             predictions = self.model.predict(input_img, verbose=0)[0]
-            
-            # Lower "neutral" state and boost "happy" sensitivity
-            predictions[6] *= 0.5
-            predictions[3] *= 2.0
-            predictions = predictions / np.sum(predictions)
 
             # Find the dominant emotion to display as the text label
             predicted_emotion_index = np.argmax(predictions)
