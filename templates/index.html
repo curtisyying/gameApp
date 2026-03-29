@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Gameboy - Modular Web</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-detection"></script>
+</head>
+<body>
+
+<div id="debugUI">
+    <span class="raw-data" id="rawLabel">AI System: BOOTING...</span>
+    <span class="visual-data" id="visualLabel">Screen Lerp: 0%</span>
+</div>
+<div class="controls">ARROWS: Move/Jump/Swim | Z: Dash | X: Sword Slice</div>
+
+<canvas id="gameCanvas" width="640" height="576"></canvas>
+
+<video id="webcam" autoplay playsinline muted></video>
+<canvas id="cropCanvas" width="48" height="48"></canvas>
+
+<script src="/static/js/engine.js"></script>
+<script src="/static/js/stress_states.js"></script>
+<script src="/static/js/main.js"></script>
+
+</body>
+</html>

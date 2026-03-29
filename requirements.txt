@@ -1,3 +1,5 @@
-tensorflow
 numpy
 opencv-python
+opencv-python-headless==4.8.1.78
+flask
+tensorflow
